@@ -1,0 +1,24 @@
+[package]
+name = "spliceai-derive"
+version = "0.0.4"
+edition = "2024"
+
+[dependencies]
+bigtools = "0.5.6"
+dashmap = { version = "6", features = ["rayon"] }
+clap = { version = "^4.0", features = ["derive"] }
+num_cpus = "1.16.0"
+log = "0.4.14"
+simple_logger = "5.0.0"
+memchr = "2.7"
+memmap2 = "0.9.4"
+rayon = "1.10.0"
+flate2 = "1.0.20"
+bytecount = "0.6"
+twobit = "0.2.2"
+genepred = { version = "0.0.11", features = ["mmap", "rayon"] }
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
