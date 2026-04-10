@@ -10,8 +10,8 @@
   </span>
 
   <p align="center">
-    <a href="https://github.com/hillerlab/core" target="_blank">
-      <img alt="GitHub License" src="https://img.shields.io/github/license/hillerlab/core?color=blue">
+    <a href="https://github.com/hillerlab/containers" target="_blank">
+      <img alt="GitHub License" src="https://img.shields.io/github/license/hillerlab/containers?color=blue">
     </a>
   </p>
 
