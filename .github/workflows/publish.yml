@@ -1,0 +1,109 @@
+name: Publish Images
+
+on:
+  release:
+    types:
+      - published
+  push:
+    tags:
+      - "**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name || github.ref_name || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover Images
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build image matrix
+        id: discover
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          entries=()
+          repository_path="$(printf '%s' "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          for dockerfile in images/*/Dockerfile; do
+            image_dir="$(dirname "$dockerfile")"
+            image_name="$(basename "$image_dir")"
+            version_file="$image_dir/VERSION"
+
+            if [[ ! -f "$version_file" ]]; then
+              echo "::error file=$version_file::Missing VERSION file for $image_name"
+              exit 1
+            fi
+
+            version="$(tr -d '[:space:]' < "$version_file")"
+            if [[ -z "$version" ]]; then
+              echo "::error file=$version_file::VERSION file for $image_name is empty"
+              exit 1
+            fi
+
+            entries+=("$(jq -nc \
+              --arg image "$image_name" \
+              --arg dockerfile "$dockerfile" \
+              --arg version "$version" \
+              --arg package "ghcr.io/${repository_path}/${image_name}" \
+              '{image: $image, dockerfile: $dockerfile, version: $version, package: $package}')")
+          done
+
+          if [[ ${#entries[@]} -eq 0 ]]; then
+            echo "::error::No images found under images/*/Dockerfile"
+            exit 1
+          fi
+
+          matrix="$(printf '%s\n' "${entries[@]}" | jq -sc '.')"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish ${{ matrix.image }}
+    needs: discover
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: |
+            MODULE_VERSION=${{ matrix.version }}
+          tags: |
+            ${{ matrix.package }}:${{ matrix.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.version=${{ matrix.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          pull: true
+          push: true
