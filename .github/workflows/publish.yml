@@ -52,7 +52,7 @@ jobs:
               --arg image "$image_name" \
               --arg dockerfile "$dockerfile" \
               --arg version "$version" \
-              --arg package "ghcr.io/${repository_path}/${image_name}" \
+              --arg package "ghcr.io/hillerlab/${image_name}" \
               '{image: $image, dockerfile: $dockerfile, version: $version, package: $package}')")
           done
 
@@ -98,6 +98,7 @@ jobs:
             MODULE_VERSION=${{ matrix.version }}
           tags: |
             ${{ matrix.package }}:${{ matrix.version }}
+            ${{ matrix.package }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.title=${{ matrix.image }}
