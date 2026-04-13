@@ -1,5 +1,4 @@
 name: Publish Images
-
 on:
   release:
     types:
@@ -8,20 +7,21 @@ on:
     tags:
       - "**"
   workflow_dispatch: {}
-
 concurrency:
   group: publish-${{ github.event.release.tag_name || github.ref_name || github.run_id }}
   cancel-in-progress: true
-
 jobs:
   discover:
     name: Discover Images
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.discover.outputs.matrix }}
+      has_images: ${{ steps.discover.outputs.has_images }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history to compare tags
 
       - name: Build image matrix
         id: discover
@@ -29,12 +29,18 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          entries=()
 
-          # INFO: find the previous tag to diff against
-          git fetch --tags --quiet
-          CURRENT_TAG="${{ github.ref_name }}"
-          PREV_TAG="$(git tag --sort=-creatordate | grep -v "^${CURRENT_TAG}$" | head -n1)"
+          # Find the previous tag to diff against
+          current_tag="${{ github.ref_name }}"
+          previous_tag="$(git tag --sort=-creatordate | grep -v "^${current_tag}$" | head -n1 || true)"
+
+          if [[ -z "$previous_tag" ]]; then
+            echo "No previous tag found — treating all images as changed"
+          else
+            echo "Comparing against previous tag: $previous_tag"
+          fi
+
+          entries=()
 
           for dockerfile in images/*/Dockerfile; do
             image_dir="$(dirname "$dockerfile")"
@@ -52,39 +58,57 @@ jobs:
               exit 1
             fi
 
-            # INFO: skip if version hasn't changed since previous tag
-            if [[ -n "$PREV_TAG" ]]; then
-              prev_version="$(git show "${PREV_TAG}:${version_file}" 2>/dev/null | tr -d '[:space:]' || true)"
-              if [[ "$version" == "$prev_version" ]]; then
-                echo "Skipping $image_name: version $version unchanged since $PREV_TAG"
-                continue
-              fi
-              echo "Including $image_name: $prev_version → $version"
+            # Decide whether to include this image
+            should_build=false
+
+            if [[ -z "$previous_tag" ]]; then
+              # No previous tag: build everything
+              should_build=true
+              reason="no previous tag"
             else
-              echo "Including $image_name: no previous tag found, building all"
+              # Check if VERSION file existed in the previous tag
+              previous_version="$(git show "${previous_tag}:${version_file}" 2>/dev/null | tr -d '[:space:]' || true)"
+
+              if [[ -z "$previous_version" ]]; then
+                # VERSION file didn't exist before → new image
+                should_build=true
+                reason="new image (no VERSION in $previous_tag)"
+              elif [[ "$previous_version" != "$version" ]]; then
+                # Version changed
+                should_build=true
+                reason="version changed ($previous_version → $version)"
+              else
+                reason="unchanged (version $version)"
+              fi
             fi
 
-            entries+=("$(jq -nc \
-              --arg image "$image_name" \
-              --arg dockerfile "$dockerfile" \
-              --arg version "$version" \
-              --arg package "ghcr.io/hillerlab/${image_name}" \
-              '{image: $image, dockerfile: $dockerfile, version: $version, package: $package}')")
+            if [[ "$should_build" == "true" ]]; then
+              echo "✅ $image_name: $reason"
+              entries+=("$(jq -nc \
+                --arg image "$image_name" \
+                --arg dockerfile "$dockerfile" \
+                --arg version "$version" \
+                --arg package "ghcr.io/hillerlab/${image_name}" \
+                '{image: $image, dockerfile: $dockerfile, version: $version, package: $package}')")
+            else
+              echo "⏭️  $image_name: $reason — skipping"
+            fi
           done
 
           if [[ ${#entries[@]} -eq 0 ]]; then
-            echo "::warning::No images with changed versions found. Nothing to build."
+            echo "No images have changed — nothing to build"
             echo "matrix=[]" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "has_images=false" >> "$GITHUB_OUTPUT"
+          else
+            matrix="$(printf '%s\n' "${entries[@]}" | jq -sc '.')"
+            echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+            echo "has_images=true" >> "$GITHUB_OUTPUT"
           fi
-
-          matrix="$(printf '%s\n' "${entries[@]}" | jq -sc '.')"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   publish:
     name: Publish ${{ matrix.image }}
     needs: discover
-    if: needs.discover.outputs.matrix != '[]' 
+    if: needs.discover.outputs.has_images == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -96,17 +120,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and push ${{ matrix.image }}
         uses: docker/build-push-action@v6
         with:
