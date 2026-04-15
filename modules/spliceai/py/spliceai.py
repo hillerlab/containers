@@ -13,7 +13,7 @@ __author__ = "Alejandro Gonzales-Irribarren"
 __credits__ = ["Yury V. Malovichko", "Michael Hiller"]
 __email__ = "alejandrxgzi@gmail.com"
 __github__ = "https://github.com/alejandrogzi"
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 import argparse
 import gzip
@@ -544,7 +544,7 @@ def process_record(
 
     acceptor_prob = y[0, :, 1]
     donor_prob = y[0, :, 2]
-    wiggle_header = WIGGLE_HEADER_TEMPLATE.format(chrom, start + 1)
+    wiggle_header = WIGGLE_HEADER_TEMPLATE.format(chrom, start + 2)
 
     acc_plus_handle, donor_plus_handle, acc_minus_handle, donor_minus_handle = (
         wig_handles
