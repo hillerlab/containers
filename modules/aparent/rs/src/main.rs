@@ -19,6 +19,19 @@ use rayon::prelude::*;
 use twobit::TwoBitFile;
 
 const CHUNKS_DIR_NAME: &str = "chunks";
+const MIN_INTERVAL_SIZE: usize = 10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct IntervalKey {
+    start: u64,
+    end: u64,
+}
+
+impl IntervalKey {
+    fn new(start: u64, end: u64) -> Self {
+        Self { start, end }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -114,6 +127,15 @@ struct Args {
         default_value_t = log::Level::Info
     )]
     pub level: log::Level,
+
+    #[arg(
+        short = 'M',
+        long = "max-interval-size",
+        help = "Max interval size",
+        value_name = "INT",
+        default_value_t = 500
+    )]
+    pub max_interval_size: usize,
 }
 
 fn main() {
@@ -514,6 +536,121 @@ fn component_bounds(component: &[GenePred]) -> (u64, u64) {
         })
 }
 
+/// Builds a lightweight interval record for overlap bucketing.
+fn interval_record(chrom: &[u8], start: u64, end: u64, strand: genepred::Strand) -> GenePred {
+    let mut transcript = GenePred::from_coords(chrom.to_vec(), start, end, Extras::new());
+    transcript.set_strand(Some(strand));
+    transcript.set_thick_start(Some(start));
+    transcript.set_thick_end(Some(end));
+    transcript
+}
+
+/// Splits a span into non-overlapping windows capped at `max_interval_size`.
+///
+/// Tails shorter than `MIN_INTERVAL_SIZE` are merged into the previous window,
+/// so the final window can exceed `max_interval_size` by at most
+/// `MIN_INTERVAL_SIZE - 1`.
+fn split_interval(start: u64, end: u64, max_interval_size: usize) -> Vec<(u64, u64)> {
+    if start >= end {
+        return Vec::new();
+    }
+
+    let max_interval_size =
+        u64::try_from(max_interval_size).expect("max interval size does not fit in u64");
+    let min_interval_size =
+        u64::try_from(MIN_INTERVAL_SIZE).expect("min interval size does not fit in u64");
+
+    if end - start <= max_interval_size {
+        return vec![(start, end)];
+    }
+
+    let mut windows: Vec<(u64, u64)> = Vec::new();
+    let mut chunk_start = start;
+
+    while chunk_start < end {
+        let remaining = end - chunk_start;
+
+        if remaining <= max_interval_size {
+            if remaining < min_interval_size && !windows.is_empty() {
+                windows.last_mut().unwrap().1 = end;
+            } else {
+                windows.push((chunk_start, end));
+            }
+            break;
+        }
+
+        let chunk_end = chunk_start + max_interval_size;
+        windows.push((chunk_start, chunk_end));
+        chunk_start = chunk_end;
+    }
+
+    windows
+}
+
+fn reverse_complement_in_place(sequence: &mut [u8]) -> io::Result<()> {
+    sequence.reverse();
+
+    for base in sequence.iter_mut() {
+        *base = match *base {
+            b'A' => b'T',
+            b'C' => b'G',
+            b'G' => b'C',
+            b'T' => b'A',
+            b'N' => b'N',
+            b'a' => b't',
+            b'c' => b'g',
+            b'g' => b'c',
+            b't' => b'a',
+            b'n' => b'n',
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid base {}", *base as char),
+                ))
+            }
+        };
+    }
+
+    Ok(())
+}
+
+fn interval_sequence(
+    sequence: &[u8],
+    start: u64,
+    end: u64,
+    strand: genepred::Strand,
+) -> io::Result<Vec<u8>> {
+    let start = usize::try_from(start).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Interval start {start} does not fit in usize"),
+        )
+    })?;
+    let end = usize::try_from(end).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Interval end {end} does not fit in usize"),
+        )
+    })?;
+
+    if end > sequence.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Interval {start}-{end} exceeds chromosome length {}",
+                sequence.len()
+            ),
+        ));
+    }
+
+    let mut target = sequence[start..end].to_vec();
+    if strand == genepred::Strand::Reverse {
+        reverse_complement_in_place(&mut target)?;
+    }
+
+    Ok(target)
+}
+
 /// Runs the main logic of the tool.
 ///
 /// # Arguments
@@ -526,6 +663,10 @@ fn component_bounds(component: &[GenePred]) -> (u64, u64) {
 /// run(Args::parse())?;
 /// ```
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    if args.max_interval_size == 0 {
+        return Err("--max-interval-size must be greater than 0".into());
+    }
+
     let mut output = OutputSink::new(
         &args.output,
         args.chunks.map(NonZeroUsize::get),
@@ -549,10 +690,13 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     for (key, mut components) in buckets {
         // INFO: loop over components and write to file
         // INFO: key is in fmt "chr:strand"
-        let chr = key.split(':').next().unwrap_or_else(|| {
-            log::error!("Could not split key {} into chromosome and strand", key);
-            std::process::exit(1);
-        });
+        let chr = key
+            .rsplit_once(':')
+            .map(|(chrom, _)| chrom)
+            .unwrap_or_else(|| {
+                log::error!("Could not split key {} into chromosome and strand", key);
+                std::process::exit(1);
+            });
         let sequence = sequences.get(chr.as_bytes()).unwrap_or_else(|| {
             log::error!(
                 "ERROR: Chromosome {} from {} not found in genome. Chromosomes available are {:?}",
@@ -566,47 +710,35 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         components.sort_unstable_by_key(|component| component_bounds(component));
 
         for component in components.iter() {
-            let mut target = Vec::new();
-            let (start, end) = component_bounds(component);
+            let (component_start, component_end) = component_bounds(component);
             let strand = component[0].strand().unwrap_or_else(|| {
                 log::error!("BED12 record {} does not have a strand", component[0]);
                 std::process::exit(1);
             });
 
-            if let Some(slice) = sequence.get(start as usize..end as usize) {
-                target.extend_from_slice(slice);
-            }
-
-            match strand {
-                genepred::Strand::Forward => {}
-                genepred::Strand::Reverse => {
-                    target.reverse();
-
-                    for base in target.iter_mut() {
-                        *base = match *base {
-                            b'A' => b'T',
-                            b'C' => b'G',
-                            b'G' => b'C',
-                            b'T' => b'A',
-                            b'N' => b'N',
-                            b'a' => b't',
-                            b'c' => b'g',
-                            b'g' => b'c',
-                            b't' => b'a',
-                            b'n' => b'n',
-                            _ => panic!("ERROR: Invalid base"),
-                        }
-                    }
-                }
-                _ => {}
-            }
-
-            output
-                .write_record(chr, start, end, strand, &target)
-                .unwrap_or_else(|e| {
-                    log::error!("Cannot write to output file: {}", e);
+            for (start, end) in
+                split_interval(component_start, component_end, args.max_interval_size)
+            {
+                let target = interval_sequence(sequence, start, end, strand).unwrap_or_else(|e| {
+                    log::error!(
+                        "Cannot extract sequence for {}:{}-{} ({}) from {}: {}",
+                        chr,
+                        start,
+                        end,
+                        strand,
+                        key,
+                        e
+                    );
                     std::process::exit(1);
                 });
+
+                output
+                    .write_record(chr, start, end, strand, &target)
+                    .unwrap_or_else(|e| {
+                        log::error!("Cannot write to output file: {}", e);
+                        std::process::exit(1);
+                    });
+            }
         }
     }
 
@@ -637,10 +769,10 @@ fn make_intervals(
     bed: &PathBuf,
     upstream: usize,
     downstream: usize,
-) -> DashMap<String, Vec<GenePred>> {
+) -> HashMap<String, Vec<GenePred>> {
     log::info!("Making intervals from {}", bed.display());
 
-    let intervals = DashMap::new();
+    let intervals: DashMap<String, HashMap<IntervalKey, GenePred>> = DashMap::new();
     genepred::Reader::<Bed12>::from_mmap(bed)
         .unwrap_or_else(|e| panic!("{}", e))
         .par_records()
@@ -648,73 +780,48 @@ fn make_intervals(
         .for_each(|record| {
             // INFO: collect 3UTR intervals and only preserve bounds as BED6
             let record = record.unwrap();
-            let name = record.name().unwrap_or_else(|| {
-                log::error!("BED12 record {} does not have a name", record);
-                std::process::exit(1);
-            });
             let strand = record.strand().unwrap_or_else(|| {
                 log::error!("BED12 record {} does not have a strand", record);
                 std::process::exit(1);
             });
             let three_prime_utr = record.three_prime_utr();
-
-            let start = three_prime_utr
-                .first()
-                .unwrap_or_else(|| {
-                    log::warn!(
-                        "BED12 record {} does not contain a 3UTR interval, will be ignored",
-                        record
-                    );
-                    &(0, 0)
-                })
-                .0
-                .saturating_sub(upstream as u64);
-
-            if start == 0 {
-                return;
-            }
-
-            let end = three_prime_utr
-                .last()
-                .unwrap_or_else(|| {
-                    log::warn!(
-                        "BED12 record {} does not contain a 3UTR interval, will be ignored",
-                        record
-                    );
-                    &(0, 0)
-                })
-                .1
-                .saturating_add(downstream as u64);
-
-            if end == 100 {
-                return;
-            }
-
-            let extras = Extras::new();
-            let mut transcript = GenePred::from_coords(record.chrom().to_vec(), start, end, extras);
-            transcript.set_name(Some(name.to_vec()));
-            transcript.set_strand(Some(strand));
-            transcript.set_thick_start(Some(start));
-            transcript.set_thick_end(Some(end));
-
             let key = format!(
                 "{}:{}",
                 std::str::from_utf8(record.chrom()).unwrap(),
                 strand
             );
 
-            intervals
-                .entry(key)
-                .or_insert_with(Vec::new)
-                .push(transcript);
+            for (exon_start, exon_end) in three_prime_utr {
+                let start = exon_start.saturating_sub(upstream as u64);
+                let end = exon_end.saturating_add(downstream as u64);
+                let interval_key = IntervalKey::new(start, end);
+
+                intervals
+                    .entry(key.clone())
+                    .or_insert_with(HashMap::new)
+                    .entry(interval_key)
+                    .or_insert_with(|| interval_record(record.chrom(), start, end, strand));
+            }
         });
 
-    log::info!(
-        "Build {} interval groups from {}",
-        intervals.len(),
-        bed.display()
-    );
+    if !intervals.is_empty() {
+        log::info!(
+            "Build {} interval groups from {}",
+            intervals.len(),
+            bed.display()
+        );
+    } else {
+        log::warn!("No intervals found in {}", bed.display());
+    }
+
     intervals
+        .into_iter()
+        .map(|(key, intervals)| {
+            let mut records: Vec<_> = intervals.into_values().collect();
+            records.sort_unstable_by_key(|record| (record.start(), record.end()));
+            (key, records)
+        })
+        .collect()
 }
 
 /// Loads genome sequences from a file (2bit or FASTA format).
@@ -919,6 +1026,183 @@ mod tests {
         let mut data = String::new();
         decoder.read_to_string(&mut data).unwrap();
         data
+    }
+
+    fn write_text_file(path: &Path, contents: &str) {
+        fs::write(path, contents).unwrap();
+    }
+
+    fn read_output_records(path: &Path) -> Vec<(String, u64, u64, String, String)> {
+        fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let mut fields = line.split('\t');
+                (
+                    fields.next().unwrap().to_string(),
+                    fields.next().unwrap().parse().unwrap(),
+                    fields.next().unwrap().parse().unwrap(),
+                    fields.next().unwrap().to_string(),
+                    fields.next().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn split_interval_caps_final_window_size() {
+        assert_eq!(
+            split_interval(190, 330, 50),
+            vec![(190, 240), (240, 290), (290, 330)]
+        );
+        assert_eq!(split_interval(190, 240, 50), vec![(190, 240)]);
+        assert!(split_interval(190, 190, 50).is_empty());
+    }
+
+    #[test]
+    fn split_interval_merges_tails_shorter_than_min_interval_size() {
+        assert_eq!(split_interval(190, 291, 50), vec![(190, 240), (240, 291)]);
+        assert_eq!(split_interval(0, 1009, 500), vec![(0, 500), (500, 1009)]);
+        assert_eq!(
+            split_interval(0, 1010, 500),
+            vec![(0, 500), (500, 1000), (1000, 1010)]
+        );
+    }
+
+    #[test]
+    fn interval_sequence_reverse_complements_reverse_strand() {
+        let sequence = b"AACCGGTT";
+
+        assert_eq!(
+            interval_sequence(sequence, 1, 5, genepred::Strand::Forward).unwrap(),
+            b"ACCG"
+        );
+        assert_eq!(
+            interval_sequence(sequence, 1, 5, genepred::Strand::Reverse).unwrap(),
+            b"CGGT"
+        );
+    }
+
+    #[test]
+    fn make_intervals_deduplicates_identical_expanded_utr_intervals() {
+        let dir = temp_dir("dedup-intervals");
+        let bed = dir.join("input.bed");
+        write_text_file(
+            &bed,
+            concat!(
+                "chr1\t100\t320\ttx1\t0\t+\t120\t200\t0,0,0\t2\t20,120,\t0,100,\n",
+                "chr1\t90\t320\ttx2\t0\t+\t110\t200\t0,0,0\t3\t10,20,120,\t0,40,110,\n"
+            ),
+        );
+
+        let intervals = make_intervals(&bed, 10, 10);
+        let plus_intervals = intervals.get("chr1:+").unwrap();
+
+        assert_eq!(plus_intervals.len(), 1);
+        assert_eq!(plus_intervals[0].start(), 190);
+        assert_eq!(plus_intervals[0].end(), 330);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn run_splits_merged_components_after_bucketing() {
+        let dir = temp_dir("merged-components");
+        let bed = dir.join("input.bed");
+        let genome = dir.join("genome.fa");
+        let output = dir.join("output.tsv");
+
+        write_text_file(
+            &bed,
+            concat!(
+                "chr1\t100\t260\ttx1\t0\t+\t120\t200\t0,0,0\t2\t20,60,\t0,100,\n",
+                "chr1\t150\t320\ttx2\t0\t+\t170\t250\t0,0,0\t2\t20,70,\t0,100,\n"
+            ),
+        );
+        write_text_file(&genome, &format!(">chr1\n{}\n", "ACGTTGCA".repeat(64)));
+
+        run(Args {
+            bed,
+            genome,
+            upstream: 10,
+            downstream: 10,
+            output: output.clone(),
+            chunks: None,
+            prefix: "part".to_string(),
+            gz: false,
+            threads: 1,
+            level: log::Level::Error,
+            max_interval_size: 50,
+        })
+        .unwrap();
+
+        let records = read_output_records(&output);
+        assert_eq!(
+            records
+                .iter()
+                .map(|(chrom, start, end, strand, _)| {
+                    (chrom.clone(), *start, *end, strand.clone())
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                ("chr1".to_string(), 190, 240, "+".to_string()),
+                ("chr1".to_string(), 240, 290, "+".to_string()),
+                ("chr1".to_string(), 290, 330, "+".to_string()),
+            ]
+        );
+        assert!(records.iter().all(|(_, start, end, _, seq)| {
+            (*end - *start) <= 50 && seq.len() == (*end - *start) as usize
+        }));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn run_merges_tiny_tail_after_bucketing() {
+        let dir = temp_dir("tiny-tail");
+        let bed = dir.join("input.bed");
+        let genome = dir.join("genome.fa");
+        let output = dir.join("output.tsv");
+
+        write_text_file(
+            &bed,
+            "chr1\t100\t281\ttx1\t0\t+\t120\t200\t0,0,0\t1\t181,\t0,\n",
+        );
+        write_text_file(&genome, &format!(">chr1\n{}\n", "ACGTTGCA".repeat(64)));
+
+        run(Args {
+            bed,
+            genome,
+            upstream: 10,
+            downstream: 10,
+            output: output.clone(),
+            chunks: None,
+            prefix: "part".to_string(),
+            gz: false,
+            threads: 1,
+            level: log::Level::Error,
+            max_interval_size: 50,
+        })
+        .unwrap();
+
+        let records = read_output_records(&output);
+        assert_eq!(
+            records
+                .iter()
+                .map(|(chrom, start, end, strand, _)| {
+                    (chrom.clone(), *start, *end, strand.clone())
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                ("chr1".to_string(), 190, 240, "+".to_string()),
+                ("chr1".to_string(), 240, 291, "+".to_string()),
+            ]
+        );
+        assert!(records.iter().all(|(_, start, end, _, seq)| {
+            (*end - *start) >= MIN_INTERVAL_SIZE as u64 && seq.len() == (*end - *start) as usize
+        }));
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     /// Tests that chunk output directory resolves to a "chunks" subdirectory.
