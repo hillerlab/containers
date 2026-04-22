@@ -60,12 +60,12 @@ dependencies = [
 
 [[package]]
 name = "aparent"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "clap",
  "dashmap",
  "flate2",
- "genepred",
+ "genepred 0.0.12",
  "log",
  "num_cpus",
  "packbed",
@@ -227,6 +227,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "genepred"
+version = "0.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fd2d81bf3f594fb771661878deca3c5634e61b72ee2c388a157061a77131542"
+dependencies = [
+ "memchr",
+ "memmap2",
+ "rayon",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -346,7 +357,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3fa675728a3be89b04d3a089d2f06b5c9e937018cdba31e272d48a05ef22d8f"
 dependencies = [
  "clap",
- "genepred",
+ "genepred 0.0.11",
  "log",
  "num_cpus",
  "rayon",

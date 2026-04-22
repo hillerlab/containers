@@ -13,6 +13,9 @@ import os
 import numpy as np
 from typing import List, Tuple, Callable
 from pathlib import Path
+from keras.models import load_model
+from scipy.signal import correlate as sp_corr
+from scipy.signal import find_peaks
 
 
 EncoderType = Callable[[List[str]], List[np.ndarray]]
@@ -36,8 +39,6 @@ def run() -> None:
     -------
     >>> run()
     """
-    from keras.models import load_model
-
     args = parse()
 
     if args.model:
@@ -599,9 +600,6 @@ def find_polya_peaks(
     >>> print(len(peaks))
     3
     """
-    from scipy.signal import correlate as sp_corr
-    from scipy.signal import find_peaks
-
     cut_pred_padded_slices = []
     cut_pred_padded_masks = []
 
