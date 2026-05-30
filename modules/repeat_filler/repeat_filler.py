@@ -26,7 +26,7 @@ from typing import TypedDict
 
 __author__ = "Ekaterina Osipova, MPI-CBG/MPI-PKS, 2018."
 __credits__ = ["Bogdan M. Kirilenko", "Alejandro Gonzales-Irribarren"]
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 
 class ChainHeader(TypedDict):
@@ -706,14 +706,22 @@ def insert_chain_content(
         first_q_gap = abs(q_lastz_start - int(lo_q_block_end))
         last_q_gap = abs(int(lo_q_gap_end) - q_lastz_end)
 
-    first_line: str = f"{str(block_len_a)}\t{str(t_lastz_start - int(t_block_end))}\t{str(first_q_gap)}\t"
+    first_line: str = (
+        f"{str(block_len_a)}\t"
+        f"{str(t_lastz_start - int(t_block_end))}\t"
+        f"{str(first_q_gap)}"
+    )
 
     blocks_to_add.append(first_line)
     for i in range(0, len(chain_content) - 1):
         blocks_to_add.append(chain_content[i])
 
     chain_content_prelast: str = chain_content[len(chain_content) - 1].strip()
-    last_line: str = f"{chain_content_prelast}\t{str(int(t_gap_end) - t_lastz_end)}\t{str(last_q_gap)}\t"
+    last_line: str = (
+        f"{chain_content_prelast}\t"
+        f"{str(int(t_gap_end) - t_lastz_end)}\t"
+        f"{str(last_q_gap)}"
+    )
     blocks_to_add.append(last_line)
     return blocks_to_add
 
@@ -797,7 +805,9 @@ def fill_gaps_from_mini_chains(
                     insert_block: list[str] = insert_chain_content(
                         chain_content, best_chain, *coords
                     )
-                    output_chain = "\n".join(insert_block)
+                    output_chain = "".join(
+                        f"{block.strip()}\n" for block in insert_block
+                    )
                     time_mark: float = time.time() - start_time
                     logging.info(f"--- {time_mark} seconds ---")
                 else:
@@ -809,10 +819,7 @@ def fill_gaps_from_mini_chains(
         else:
             output_chain = line
 
-        if args.output:
-            ouf.write(output_chain)
-        else:
-            print(output_chain)
+        ouf.write(output_chain)
 
     if args.output:
         ouf.close()
@@ -860,11 +867,11 @@ def main() -> None:
         next_pos: int = 0
 
         current_chain_lines: list[str] = [
-            f"{i}\n" for i in current_chain_string.split("\n")
+            f"{i}\n" for i in current_chain_string.splitlines()
         ]
 
         all_mini_chain_lines: list[str] = [
-            f"{i}\n" for i in all_mini_chains.split("\n")
+            f"{i}\n" for i in all_mini_chains.splitlines()
         ]
         number_mini_chains: int = len(all_mini_chain_lines)
 
