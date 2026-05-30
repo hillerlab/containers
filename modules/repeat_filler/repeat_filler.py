@@ -17,6 +17,7 @@ import argparse
 import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -25,7 +26,7 @@ from typing import TypedDict
 
 __author__ = "Ekaterina Osipova, MPI-CBG/MPI-PKS, 2018."
 __credits__ = ["Bogdan M. Kirilenko", "Alejandro Gonzales-Irribarren"]
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 
 class ChainHeader(TypedDict):
@@ -276,10 +277,10 @@ def make_shell_list(
         args: Parsed command-line arguments containing file paths and gap filtering parameters.
     """
     out_file_handler = open(out_file, "w")
+    logging.info(f"Writing shell jobs to {out_file}")
 
     out_file_handler.write("#!/usr/bin/env bash\n")
-    out_file_handler.write("#set -o pipefail\n")
-    out_file_handler.write("#set -e\n")
+    out_file_handler.write("set -euo pipefail\n")
 
     gap_count: int = 0
 
@@ -377,16 +378,32 @@ def make_shell_list(
                                     "real_q_block_end": real_q_block_end,
                                     "real_q_gap_end": real_q_gap_end,
                                 }
+                                target_region: str = (
+                                    f"{target_two_bit}/{t_name}"
+                                    f"[{t_block_end}..{t_gap_end}]{unmask}"
+                                )
+                                query_region: str = (
+                                    f"{query_two_bit}/{q_name}"
+                                    f"[{real_q_block_end}..{real_q_gap_end}]{unmask}"
+                                )
                                 command_1: str = (
-                                    f"{target_two_bit}/{t_name}[{t_block_end}..{t_gap_end}]{unmask} "
-                                    f"{query_two_bit}/{q_name}[{real_q_block_end}..{real_q_gap_end}]{unmask} "
+                                    f"{shlex.quote(lastz_arg)} "
+                                    f"{shlex.quote(target_region)} "
+                                    f"{shlex.quote(query_region)} "
                                     f"--format=axt {lastz_parameters} | "
                                 )
-                                command_2: str = f"-linearGap=loose stdin {target_two_bit} {query_two_bit} stdout 2> /dev/null | "
-                                command_3: str = "stdin stdout"
+                                command_2: str = (
+                                    f"{shlex.quote(axt_chain_arg)} "
+                                    f"-linearGap=loose stdin "
+                                    f"{shlex.quote(target_two_bit)} "
+                                    f"{shlex.quote(query_two_bit)} "
+                                    "stdout 2> /dev/null | "
+                                )
+                                command_3: str = (
+                                    f"{shlex.quote(chain_sort_arg)} stdin stdout"
+                                )
                                 command_lastz: str = (
-                                    f"{lastz_arg}{command_1}{axt_chain_arg}"
-                                    f"{command_2}{chain_sort_arg} {command_3}"
+                                    f"{command_1}{command_2}{command_3}"
                                 )
 
                                 shell_command: str = (
@@ -395,6 +412,7 @@ def make_shell_list(
                                     f'echo -e "LINE{line_number - 1}\\n"\n'
                                 )
 
+                                logging.info(shell_command)
                                 out_file_handler.write(shell_command)
 
                             current_q_position = q_gap_end
@@ -471,11 +489,19 @@ def run_all_shell(shell_file: ShellScriptPath) -> str:
     Returns:
         The decoded stdout output from running all shell commands as a string.
     """
-    all_shell_command: str = f"bash {shell_file}"
     try:
-        all_mini_chains: bytes = subprocess.check_output(all_shell_command, shell=True)
+        all_mini_chains: bytes = subprocess.check_output(["bash", shell_file])
     except subprocess.CalledProcessError as shell_run:
-        logging.error("shell command failed", shell_run.returncode, shell_run.output)
+        logging.error(
+            "shell command failed with exit code %s while running %s",
+            shell_run.returncode,
+            shell_file,
+        )
+        if shell_run.output:
+            logging.debug(
+                "partial shell stdout:\n%s",
+                shell_run.output.decode(errors="replace"),
+            )
         sys.exit(1)
 
     all_mini_chains_decoded: str = all_mini_chains.decode()
