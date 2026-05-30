@@ -25,7 +25,7 @@ from typing import TypedDict
 
 __author__ = "Ekaterina Osipova, MPI-CBG/MPI-PKS, 2018."
 __credits__ = ["Bogdan M. Kirilenko", "Alejandro Gonzales-Irribarren"]
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 
 
 class ChainHeader(TypedDict):
@@ -386,7 +386,7 @@ def make_shell_list(
                                 command_3: str = "stdin stdout"
                                 command_lastz: str = (
                                     f"{lastz_arg}{command_1}{axt_chain_arg}"
-                                    f"{command_2}{chain_sort_arg}{command_3}"
+                                    f"{command_2}{chain_sort_arg} {command_3}"
                                 )
 
                                 shell_command: str = (
