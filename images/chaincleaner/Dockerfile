@@ -30,6 +30,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
         ucsc-chaincleaner=455 \
         ucsc-chainnet=482 \
         ucsc-chainscore=455 \
+        ucsc-chainsort=482 \
         perl \
         procps-ng \
     && micromamba clean --all --yes
