@@ -17,6 +17,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
         procps-ng \
     && micromamba clean --all --yes
 
+ENV PATH=/opt/conda/bin:$PATH
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 
 CMD ["/bin/bash"]
