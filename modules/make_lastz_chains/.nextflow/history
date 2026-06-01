@@ -1,1 +1,0 @@
-2026-06-01 13:37:51	-	pedantic_borg	-	b37a08f6ab5d679b56f555536ab7de69	75b09be6-692d-461d-bd45-796306ee451e	nextflow run main.nf -profile test,local -with-docker 'make_lastz_chains:3.1.0'
