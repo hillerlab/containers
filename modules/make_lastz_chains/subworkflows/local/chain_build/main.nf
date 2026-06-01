@@ -1,0 +1,77 @@
+/*
+Copyright (c) 2026 The Hiller Lab at the Senckenberg Gessellschaft für Naturforschung
+Distributed under the terms of the Apache License, Version 2.0.
+*/
+
+/*
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    CHAIN_BUILD subworkflow
+    1. PSL_SORT_ACC — sort all PSL files by target chromosome
+    2. PSL_BUNDLE   — group sorted PSL files into chromosome bundles
+    3. AXT_CHAIN    — convert each PSL bundle to chains (parallel)
+    4. CHAINTOOLS_MERGE — merge all chain files into one compressed chain
+
+    Emits: merged_chain — *.all.chain.gz
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*/
+
+include { PSL_SORT_ACC     } from '../../../modules/local/psl_sort_acc/main'
+include { PSL_BUNDLE       } from '../../../modules/local/psl_bundle/main'
+include { AXT_CHAIN        } from '../../../modules/local/axt_chain/main'
+include { CHAINTOOLS_ANTIREPEAT } from '../../../modules/local/chaintools/antirepeat/main'
+include { CHAINTOOLS_MERGE } from '../../../modules/local/chaintools/merge/main'
+
+workflow CHAIN_BUILD {
+    take:
+    psl_gz_files        // channel of .psl.gz files from LASTZ_ALIGNMENT
+    reference_twobit       // path
+    query_twobit        // path
+    reference_chrom_sizes  // path
+    reference_name         // val
+    query_name          // val
+
+    main:
+    // ── Sort all PSL files by chromosome ───────────────────────────────────
+    PSL_SORT_ACC (
+        psl_gz_files.collect()
+    )
+
+    // ── Bundle sorted PSL files by chromosome for parallel axtChain ────────
+    PSL_BUNDLE (
+        PSL_SORT_ACC.out.sorted_psl_dir,
+        reference_chrom_sizes,
+        params.bundle_psl_max_bases
+    )
+
+    // ── Run axtChain on each bundle in parallel ─────────────────────────────
+    AXT_CHAIN (
+        PSL_BUNDLE.out.bundles.flatten(),  // one channel item per bundle file
+        reference_twobit,
+        query_twobit,
+        params.min_chain_score,
+        params.chain_linear_gap,
+        params.lastz_q ?: ''
+    )
+
+    // ── Run anti repeat on each chain ─────────────────────────────────────────
+    CHAINTOOLS_ANTIREPEAT (
+      AXT_CHAIN.out.chain,
+      reference_twobit,
+      query_twobit,
+    )
+
+    // ── Merge all chain files into one ────────────────────────────────────────
+    CHAINTOOLS_MERGE (
+        CHAINTOOLS_ANTIREPEAT.out.chain
+          .collect()
+          .map { chains -> [ [ id: reference_name + '.' + query_name ], chains ] }
+    )
+
+    emit:
+    merged_chain = CHAINTOOLS_MERGE.out.chain_gz
+    versions     = PSL_SORT_ACC.out.versions
+                     .mix( PSL_BUNDLE.out.versions,
+                           AXT_CHAIN.out.versions,
+                           CHAINTOOLS_ANTIREPEAT.out.versions,
+                           CHAINTOOLS_MERGE.out.versions )
+}
