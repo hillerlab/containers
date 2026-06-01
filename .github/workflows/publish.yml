@@ -6,7 +6,12 @@ on:
   push:
     tags:
       - "**"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_image:
+        description: "Optionally rebuild one image even if its VERSION is unchanged"
+        required: false
+        type: string
 concurrency:
   group: publish-${{ github.event.release.tag_name || github.ref_name || github.run_id }}
   cancel-in-progress: true
@@ -26,6 +31,8 @@ jobs:
       - name: Build image matrix
         id: discover
         shell: bash
+        env:
+          FORCE_IMAGE: ${{ inputs.force_image }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -33,6 +40,8 @@ jobs:
           # Find the previous tag to diff against
           current_tag="${{ github.ref_name }}"
           previous_tag="$(git tag --sort=-creatordate | grep -v "^${current_tag}$" | head -n1 || true)"
+          force_image="${FORCE_IMAGE:-}"
+          force_image_found=false
 
           if [[ -z "$previous_tag" ]]; then
             echo "No previous tag found — treating all images as changed"
@@ -61,7 +70,11 @@ jobs:
             # Decide whether to include this image
             should_build=false
 
-            if [[ -z "$previous_tag" ]]; then
+            if [[ -n "$force_image" && "$force_image" == "$image_name" ]]; then
+              force_image_found=true
+              should_build=true
+              reason="forced by workflow_dispatch"
+            elif [[ -z "$previous_tag" ]]; then
               # No previous tag: build everything
               should_build=true
               reason="no previous tag"
@@ -95,6 +108,11 @@ jobs:
             fi
           done
 
+          if [[ -n "$force_image" && "$force_image_found" != "true" ]]; then
+            echo "::error::Unknown force_image: $force_image"
+            exit 1
+          fi
+
           if [[ ${#entries[@]} -eq 0 ]]; then
             echo "No images have changed — nothing to build"
             echo "matrix=[]" >> "$GITHUB_OUTPUT"
@@ -120,6 +138,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Log in to GHCR
