@@ -11,9 +11,10 @@ LABEL module.version="${MODULE_VERSION}"
 RUN echo "Building version ${MODULE_VERSION}"
 
 RUN micromamba install -y -n base -c conda-forge -c bioconda \
-        python=3.9 \
+        python=3.11 \
         lastz=1.0.4 \
         ucsc-axttopsl=482 \
+        ucsc-twobittofa=482 \
         procps-ng \
     && micromamba clean --all --yes
 
