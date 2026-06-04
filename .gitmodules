@@ -4,3 +4,6 @@
 [submodule "make_lastz_chains"]
 	path = modules/make_lastz_chains
 	url = https://github.com/hillerlab/make_lastz_chains
+[submodule "modules/softmask"]
+	path = modules/softmask
+	url = https://github.com/hillerlab/softmask
