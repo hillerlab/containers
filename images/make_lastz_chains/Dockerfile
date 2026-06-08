@@ -20,7 +20,7 @@ RUN cargo install \
         --all-features \
         --locked \
         --root /opt/rust-tools \
-        --version 0.0.4 \
+        --version 0.0.5 \
         chaintools
 
 # ---------- Build Stage - LASTZ ----------
