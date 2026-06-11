@@ -11,7 +11,7 @@ RUN apk add --no-cache \
         cmake \
         pkgconf
 
-RUN cargo install \
+run cargo install \
         --locked \
         --root /opt/rust-tools \
         --version 0.0.34 \
@@ -25,6 +25,7 @@ RUN cargo install \
     && cargo install \
         --all-features \
         --locked \
+        --force \
         --root /opt/rust-tools \
         --version 0.0.3 \
         psltools
