@@ -119,7 +119,6 @@ RUN set -eux; \
     build_kent /build/kent-482 /opt/kent-482 \
         utils/faToTwoBit \
         utils/twoBitToFa \
-        hg/pslSortAcc \
         hg/mouseStuff/axtChain \
         hg/mouseStuff/axtToPsl \
         hg/mouseStuff/chainSort \
@@ -154,6 +153,7 @@ RUN apk add --no-cache \
 
 COPY --from=rust-builder /opt/rust-tools/bin/chaintools /usr/local/bin/chaintools
 COPY --from=rust-builder /opt/rust-tools/bin/chromsize /usr/local/bin/chromsize
+COPY --from=rust-builder /opt/rust-tools/bin/psltools /usr/local/bin/psltools
 COPY --from=lastz-builder /opt/lastz/bin/lastz /usr/local/bin/lastz
 COPY --from=kent-builder /opt/kent-482/bin/ /usr/local/bin/
 COPY --from=kent-builder /opt/kent-455/bin/ /usr/local/bin/
@@ -179,6 +179,7 @@ RUN chmod 0755 \
     && python --version 2>&1 | grep -q '^Python 3\.11\.' \
     && chaintools --version \
     && chromsize --version \
+    && psltools --version \
     && { lastz --version || test "$?" -eq 1; } \
     && repeat_filler --help >/dev/null \
     && partition.py --help >/dev/null \
@@ -194,7 +195,6 @@ RUN chmod 0755 \
         chainScore \
         chainSort \
         faToTwoBit \
-        pslSortAcc \
         twoBitToFa; \
     do \
         command -v "${command}" >/dev/null; \
