@@ -26,7 +26,7 @@ RUN cargo install \
         --all-features \
         --locked \
         --root /opt/rust-tools \
-        --version 0.0.2 \
+        --version 0.0.3 \
         psltools
         
 
