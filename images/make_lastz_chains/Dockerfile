@@ -20,8 +20,15 @@ RUN cargo install \
         --all-features \
         --locked \
         --root /opt/rust-tools \
-        --version 0.0.5 \
-        chaintools
+        --version 0.0.7 \
+        chaintools \
+    && cargo install \
+        --all-features \
+        --locked \
+        --root /opt/rust-tools \
+        --version 0.0.2 \
+        psltools
+        
 
 # ---------- Build Stage - LASTZ ----------
 FROM alpine:3.22 AS lastz-builder
