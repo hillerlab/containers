@@ -39,6 +39,10 @@ pub enum Error {
     #[error("{0}")]
     Config(String),
 
+    /// A failure while normalizing or validating PacBio BAM files.
+    #[error("{0}")]
+    Pacbio(String),
+
     /// Serialization failure for `stats.json`.
     #[error("serialization error: {0}")]
     Serde(#[from] serde_json::Error),
@@ -48,6 +52,11 @@ impl Error {
     /// Convenience constructor for a configuration error.
     pub fn config(msg: impl Into<String>) -> Self {
         Error::Config(msg.into())
+    }
+
+    /// Convenience constructor for a PacBio BAM processing error.
+    pub fn pacbio(msg: impl Into<String>) -> Self {
+        Error::Pacbio(msg.into())
     }
 
     /// Convenience constructor for a parse error.

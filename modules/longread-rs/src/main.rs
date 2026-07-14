@@ -8,6 +8,8 @@ use clap::{Args, Parser, Subcommand};
 use longread::error::{Error, Result};
 use longread::generate::{EventWeights, NewIsoformsMode};
 use longread::model::EventType;
+use longread::pacbio::check::{self, CheckParams};
+use longread::pacbio::normalize::{self, NormalizeParams};
 use longread::pbsim::{self, PbsimParams};
 use longread::prepare::{self, PrepareParams};
 use longread::split::{self, SplitParams};
@@ -31,6 +33,11 @@ enum Command {
     Pbsim(PbsimArgs),
     /// Split a PBSIM3 transcript file into balanced chunks.
     Split(SplitArgs),
+    /// Normalize PBSIM3 subread BAMs into one synthetic PacBio movie with globally unique ZMWs
+    /// and one specification-compliant `SUBREAD` read group.
+    Rg(RgArgs),
+    /// Validate that CCS chunks do not overlap in PacBio's movie/ZMW key space.
+    Check(CheckArgs),
 }
 
 #[derive(Debug, Args)]
@@ -150,6 +157,44 @@ struct SplitArgs {
     /// Prefix stem for chunk task prefixes.
     #[arg(long, default_value = "simulation")]
     prefix: String,
+}
+
+#[derive(Debug, Args)]
+struct RgArgs {
+    /// Input subread BAMs (each a distinct PBSIM3 movie).
+    #[arg(long, num_args = 1.., required = true)]
+    bams: Vec<PathBuf>,
+    /// Synthetic movie name (e.g. `movie.<id>`); sanitized to `[A-Za-z0-9_.-]`.
+    #[arg(long)]
+    movie: String,
+    /// Output directory for `*.normalized.bam` files.
+    #[arg(long, default_value = ".")]
+    outdir: PathBuf,
+    /// Output path for the ZMW map TSV.
+    #[arg(long, default_value = "zmw_map.tsv")]
+    zmw_map: PathBuf,
+    /// Threads (0 = all available cores).
+    #[arg(long, default_value_t = 0)]
+    threads: usize,
+    /// Upper bound on simultaneously open file descriptors.
+    #[arg(long, default_value_t = 512)]
+    max_open_files: usize,
+}
+
+#[derive(Debug, Args)]
+struct CheckArgs {
+    /// Input CCS chunk BAMs.
+    #[arg(long, num_args = 1.., required = true)]
+    bams: Vec<PathBuf>,
+    /// Marker file to create on success.
+    #[arg(long, default_value = "ccs_chunks.valid")]
+    out: PathBuf,
+    /// Threads (0 = all available cores).
+    #[arg(long, default_value_t = 0)]
+    threads: usize,
+    /// Upper bound on simultaneously open file descriptors.
+    #[arg(long, default_value_t = 512)]
+    max_open_files: usize,
 }
 
 /// Parse `donor=1,acceptor=1,...` into [`EventWeights`], starting from a uniform baseline.
@@ -320,6 +365,45 @@ fn run_split(args: &SplitArgs) -> Result<()> {
     Ok(())
 }
 
+fn run_rg(args: &RgArgs) -> Result<()> {
+    let params = NormalizeParams {
+        bams: args.bams.clone(),
+        movie: args.movie.clone(),
+        outdir: args.outdir.clone(),
+        zmw_map: args.zmw_map.clone(),
+        threads: args.threads,
+        max_open_files: args.max_open_files,
+    };
+    let stats = normalize::run(&params)?;
+    eprintln!(
+        "longread rg: {} BAM(s), {} movie(s), {} record(s) -> {} normalized BAM(s)",
+        stats.input_bams,
+        stats.movies,
+        stats.records,
+        stats.outputs.len(),
+    );
+    eprintln!(
+        "  global ZMW capacity {}, read group {}",
+        stats.zmw_capacity, stats.rg_id,
+    );
+    Ok(())
+}
+
+fn run_check(args: &CheckArgs) -> Result<()> {
+    let params = CheckParams {
+        bams: args.bams.clone(),
+        out: args.out.clone(),
+        threads: args.threads,
+        max_open_files: args.max_open_files,
+    };
+    let stats = check::run(&params)?;
+    eprintln!(
+        "longread check: OK — {} BAM(s), {} record(s), {} distinct movie/ZMW key(s)",
+        stats.input_bams, stats.records, stats.distinct_keys,
+    );
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.command {
@@ -327,6 +411,8 @@ fn main() -> ExitCode {
         Command::Validate(args) => run_validate(args),
         Command::Pbsim(args) => run_pbsim(args),
         Command::Split(args) => run_split(args),
+        Command::Rg(args) => run_rg(args),
+        Command::Check(args) => run_check(args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
