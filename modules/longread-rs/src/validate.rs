@@ -79,6 +79,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
     };
 
     let mut errors: Vec<String> = Vec::new();
+    let mut warns: Vec<String> = Vec::new();
 
     // Rule 2: unique transcript name across BED.
     let mut name_counts: HashMap<String, usize> = HashMap::new();
@@ -217,6 +218,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
             .or_default()
             .push((format!("{chrom}\t{}", strand.as_char()), strand));
     }
+
     for (gene, members) in &gene_members {
         let distinct: HashSet<&String> = members.iter().map(|(k, _)| k).collect();
         if distinct.len() > 1 {
@@ -229,7 +231,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
         }
     }
 
-    // Rule 10: duplicate genomic transcript structures among originals.
+    // Rule 10: duplicate genomic transcript structures among originals -> WARNING not ERROR
     {
         let mut seen: HashSet<(String, char, Vec<u64>, Vec<u64>)> = HashSet::new();
         for (idx, g) in records.iter().enumerate() {
@@ -245,11 +247,15 @@ pub fn load_and_validate<P: AsRef<Path>>(
             let ends: Vec<u64> = exons.iter().map(|e| e.1).collect();
             let key = (chrom, strand.as_char(), starts, ends);
             if !seen.insert(key) {
-                errors.push(format!(
+                // WARN: duplicate genomic transcript structures are not errors
+                // we ignore them for now
+
+                let warn = format!(
                     "BED record {} ('{}'): duplicate genomic transcript structure",
                     idx + 1,
                     record_names[idx].as_deref().unwrap_or("?")
-                ));
+                );
+                warns.push(warn);
             }
         }
     }
@@ -258,6 +264,15 @@ pub fn load_and_validate<P: AsRef<Path>>(
         errors.sort();
         errors.dedup();
         return Err(Error::Validation(errors.join("\n")));
+    }
+
+    if !warns.is_empty() {
+        warns.sort();
+        warns.dedup();
+
+        for warn in warns {
+            println!("  {}", warn);
+        }
     }
 
     // All checks passed — assemble the validated model.
