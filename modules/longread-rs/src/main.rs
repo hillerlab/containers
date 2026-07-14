@@ -111,6 +111,10 @@ struct ValidateArgs {
     /// Chromosome sizes file (enables coordinate-bounds validation).
     #[arg(long)]
     chrom_sizes: Option<PathBuf>,
+
+    /// Minimum transcript length (exonic length).
+    #[arg(long, default_value_t = 100)]
+    min_transcript_length: u64,
 }
 
 #[derive(Debug, Args)]
@@ -269,7 +273,9 @@ fn run_validate(args: &ValidateArgs) -> Result<()> {
         &args.transcript_gene,
         args.chrom_sizes.as_ref(),
         0,
+        args.min_transcript_length,
     )?;
+
     eprintln!(
         "longread validate: OK — {} transcripts across {} genes",
         input.input_transcript_count,
