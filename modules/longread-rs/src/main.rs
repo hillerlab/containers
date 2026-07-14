@@ -161,9 +161,9 @@ struct SplitArgs {
 
 #[derive(Debug, Args)]
 struct RgArgs {
-    /// Input subread BAMs (each a distinct PBSIM3 movie).
-    #[arg(long, num_args = 1.., required = true)]
-    bams: Vec<PathBuf>,
+    /// File listing the input subread BAMs, one path per line.
+    #[arg(long)]
+    bams: PathBuf,
     /// Synthetic movie name (e.g. `movie.<id>`); sanitized to `[A-Za-z0-9_.-]`.
     #[arg(long)]
     movie: String,
@@ -183,9 +183,9 @@ struct RgArgs {
 
 #[derive(Debug, Args)]
 struct CheckArgs {
-    /// Input CCS chunk BAMs.
-    #[arg(long, num_args = 1.., required = true)]
-    bams: Vec<PathBuf>,
+    /// File listing the input CCS chunk BAMs, one path per line.
+    #[arg(long)]
+    bams: PathBuf,
     /// Marker file to create on success.
     #[arg(long, default_value = "ccs_chunks.valid")]
     out: PathBuf,
@@ -365,9 +365,28 @@ fn run_split(args: &SplitArgs) -> Result<()> {
     Ok(())
 }
 
+/// Read a BAM-list file (one path per line; blank lines ignored).
+fn read_bam_list(path: &PathBuf) -> Result<Vec<PathBuf>> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| Error::pacbio(format!("cannot read BAM list {}: {e}", path.display())))?;
+    let bams: Vec<PathBuf> = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    if bams.is_empty() {
+        return Err(Error::pacbio(format!(
+            "BAM list {} is empty",
+            path.display()
+        )));
+    }
+    Ok(bams)
+}
+
 fn run_rg(args: &RgArgs) -> Result<()> {
     let params = NormalizeParams {
-        bams: args.bams.clone(),
+        bams: read_bam_list(&args.bams)?,
         movie: args.movie.clone(),
         outdir: args.outdir.clone(),
         zmw_map: args.zmw_map.clone(),
@@ -376,9 +395,9 @@ fn run_rg(args: &RgArgs) -> Result<()> {
     };
     let stats = normalize::run(&params)?;
     eprintln!(
-        "longread rg: {} BAM(s), {} movie(s), {} record(s) -> {} normalized BAM(s)",
+        "longread rg: {} BAM(s), {} source file(s), {} record(s) -> {} normalized BAM(s)",
         stats.input_bams,
-        stats.movies,
+        stats.source_files,
         stats.records,
         stats.outputs.len(),
     );
@@ -391,7 +410,7 @@ fn run_rg(args: &RgArgs) -> Result<()> {
 
 fn run_check(args: &CheckArgs) -> Result<()> {
     let params = CheckParams {
-        bams: args.bams.clone(),
+        bams: read_bam_list(&args.bams)?,
         out: args.out.clone(),
         threads: args.threads,
         max_open_files: args.max_open_files,

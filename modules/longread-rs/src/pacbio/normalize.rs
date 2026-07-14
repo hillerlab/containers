@@ -3,16 +3,24 @@
 //! CCS chunking is defined for a single movie, but PBSIM3 restarts ZMW numbering for every
 //! simulated movie and emits the placeholder read group `ID:ffffffff`. This subcommand:
 //!
-//! 1. assigns every original `(movie, zmw)` pair a deterministic global ZMW;
+//! 1. assigns every original ZMW a deterministic global ZMW;
 //! 2. rewrites each record's QNAME and `zm` tag to that global ZMW;
 //! 3. rewrites all records to one specification-compliant `SUBREAD` read group;
 //! 4. emits a `zmw_map.tsv` preserving the original identity.
 //!
-//! It replaces a `samtools view | awk | sort` pipeline that decompressed every BAM ~5 times.
-//! Here the work is exactly two parallel passes (scan, then rewrite) with a serial, deterministic
+//! **ZMW allocation is keyed per source BAM, not per movie name.** Each PBSIM3 output file has its
+//! own restarted ZMW space; a molecule's subreads never span files. In `trans` mode there is one
+//! movie per file, so this is identical to keying on the movie. In `wgs` mode PBSIM3 appends the
+//! (unpadded) reference index to `--id-prefix`, so movie names *collide* across files
+//! (e.g. `id-prefix=movie.x.13, ref=1` and `id-prefix=movie.x.1, ref=31` both yield `movie.x.131`),
+//! each restarting ZMW at 1 — so the movie name is not a safe key, but the file is.
+//!
+//! It replaces a `samtools view | awk | sort` pipeline that decompressed every BAM ~5 times. Here
+//! the work is exactly two parallel passes (scan, then rewrite) with a serial, deterministic
 //! allocation step in between, so output is byte-identical regardless of thread count.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufWriter, Write as _};
 use std::path::{Path, PathBuf};
@@ -37,7 +45,7 @@ const ZM_TAG: Tag = Tag::new(b'z', b'm');
 /// Parameters for `longread rg`.
 #[derive(Debug, Clone)]
 pub struct NormalizeParams {
-    /// Input subread BAMs (each a distinct PBSIM3 movie).
+    /// Input subread BAMs (each with its own restarted ZMW space).
     pub bams: Vec<PathBuf>,
     /// Raw synthetic movie name (e.g. `movie.<id>`); sanitized internally.
     pub movie: String,
@@ -56,8 +64,8 @@ pub struct NormalizeParams {
 pub struct NormalizeStats {
     /// Number of input BAMs.
     pub input_bams: usize,
-    /// Number of distinct source movies observed.
-    pub movies: usize,
+    /// Number of non-empty source BAMs that received a ZMW range.
+    pub source_files: usize,
     /// Total records processed.
     pub records: u64,
     /// Allocated global ZMW capacity.
@@ -69,42 +77,53 @@ pub struct NormalizeStats {
 }
 
 /// Per-file result of the scan pass.
-#[derive(Default)]
 struct FileScan {
-    /// Per-movie `(min_zmw, max_zmw)`.
-    movie_bounds: HashMap<Vec<u8>, (i64, i64)>,
-    /// Observed `(movie, zmw)` pairs (for the ZMW map).
-    pairs: HashSet<(Vec<u8>, i64)>,
-    /// Every QNAME seen (for global duplicate detection).
-    qnames: Vec<Vec<u8>>,
+    /// Source BAM path (the allocation key).
+    path: PathBuf,
+    /// Movie name observed in the file (provenance); empty if the file had no records.
+    movie: Vec<u8>,
+    /// Minimum ZMW in the file (`i64::MAX` if empty).
+    min_zmw: i64,
+    /// Maximum ZMW in the file (`i64::MIN` if empty).
+    max_zmw: i64,
+    /// Distinct observed ZMWs, ascending.
+    zmws: Vec<i64>,
     /// Record count.
     records: u64,
 }
 
-/// Deterministic per-movie ZMW allocation: `new_zmw = offset + (zmw - min) + 1`.
+/// One `zmw_map.tsv` row.
+struct MapRow {
+    source_bam: String,
+    original_movie: Vec<u8>,
+    original_zmw: i64,
+    new_zmw: i64,
+}
+
+/// Deterministic per-file ZMW allocation: `new_zmw = offset + (zmw - min) + 1`.
 struct Allocation {
-    /// movie -> `(min_zmw, offset)`.
-    table: HashMap<Vec<u8>, (i64, i64)>,
+    /// source BAM path -> `(min_zmw, offset)`.
+    table: HashMap<PathBuf, (i64, i64)>,
     /// Total global ZMW capacity.
     capacity: i64,
 }
 
 impl Allocation {
-    fn map_zmw(&self, movie: &[u8], zmw: i64) -> Option<i64> {
+    fn map_zmw(&self, path: &Path, zmw: i64) -> Option<i64> {
         self.table
-            .get(movie)
+            .get(path)
             .map(|(min, offset)| offset + (zmw - min) + 1)
     }
 }
 
 /// Result of merging per-file scans and assigning global ZMW offsets.
 struct Merged {
-    /// Deterministic per-movie ZMW allocation.
+    /// Deterministic per-file ZMW allocation.
     allocation: Allocation,
-    /// Observed `(movie, zmw)` pairs, sorted by `(movie, zmw)`.
-    pairs: Vec<(Vec<u8>, i64)>,
-    /// Number of distinct source movies.
-    movies: usize,
+    /// `zmw_map.tsv` rows, ordered by `(source_bam, zmw)`.
+    map_rows: Vec<MapRow>,
+    /// Number of non-empty source files.
+    source_files: usize,
     /// Total records scanned.
     records: u64,
 }
@@ -133,12 +152,7 @@ pub fn run(params: &NormalizeParams) -> Result<NormalizeStats> {
     // Serial, deterministic merge + allocation.
     let merged = merge_and_allocate(scans)?;
 
-    write_zmw_map(
-        &params.zmw_map,
-        &merged.pairs,
-        &merged.allocation,
-        &synthetic_movie,
-    )?;
+    write_zmw_map(&params.zmw_map, &merged.map_rows, &synthetic_movie)?;
 
     // Pass 2 — parallel rewrite.
     let outputs: Vec<PathBuf> = pool.install(|| {
@@ -159,7 +173,7 @@ pub fn run(params: &NormalizeParams) -> Result<NormalizeStats> {
 
     Ok(NormalizeStats {
         input_bams: params.bams.len(),
-        movies: merged.movies,
+        source_files: merged.source_files,
         records: merged.records,
         zmw_capacity: merged.allocation.capacity,
         rg_id,
@@ -167,14 +181,21 @@ pub fn run(params: &NormalizeParams) -> Result<NormalizeStats> {
     })
 }
 
-/// Scan one BAM: validate its read group, then accumulate per-movie ZMW bounds, observed pairs,
-/// and QNAMEs. Only the QNAME of each record is decoded.
+/// Scan one BAM: validate its read group, then accumulate this file's ZMW bounds and observed
+/// ZMWs. QNAMEs must be unique *within* the file (a real integrity check); duplicates *across*
+/// files are expected in `wgs` mode and are disambiguated by per-file allocation.
 fn scan_file(path: &Path, synthetic_movie: &str, rg_id: &str) -> Result<FileScan> {
     let (mut reader, header) = open_reader(path)?;
     // Reuse the header builder purely to validate the read group early.
     normalized_header(&header, synthetic_movie, rg_id, path)?;
 
-    let mut scan = FileScan::default();
+    let mut movie: Vec<u8> = Vec::new();
+    let mut min_zmw = i64::MAX;
+    let mut max_zmw = i64::MIN;
+    let mut zmws: HashSet<i64> = HashSet::new();
+    let mut qnames: HashSet<Vec<u8>> = HashSet::new();
+    let mut records = 0u64;
+
     let mut record = bam::Record::default();
     loop {
         let n = reader
@@ -189,68 +210,68 @@ fn scan_file(path: &Path, synthetic_movie: &str, rg_id: &str) -> Result<FileScan
         let bytes: &[u8] = name.as_ref();
         let parsed = parse_subread_name(bytes)?;
 
-        scan.movie_bounds
-            .entry(parsed.movie.to_vec())
-            .and_modify(|(min, max)| {
-                if parsed.zmw < *min {
-                    *min = parsed.zmw;
-                }
-                if parsed.zmw > *max {
-                    *max = parsed.zmw;
-                }
-            })
-            .or_insert((parsed.zmw, parsed.zmw));
-        scan.pairs.insert((parsed.movie.to_vec(), parsed.zmw));
-        scan.qnames.push(bytes.to_vec());
-        scan.records += 1;
+        if records == 0 {
+            movie = parsed.movie.to_vec();
+        }
+        if parsed.zmw < min_zmw {
+            min_zmw = parsed.zmw;
+        }
+        if parsed.zmw > max_zmw {
+            max_zmw = parsed.zmw;
+        }
+        zmws.insert(parsed.zmw);
+        if !qnames.insert(bytes.to_vec()) {
+            return Err(Error::pacbio(format!(
+                "{}: duplicate QNAME within file: {}",
+                path.display(),
+                String::from_utf8_lossy(bytes)
+            )));
+        }
+        records += 1;
     }
-    Ok(scan)
+
+    let mut zmws: Vec<i64> = zmws.into_iter().collect();
+    zmws.sort_unstable();
+    Ok(FileScan {
+        path: path.to_path_buf(),
+        movie,
+        min_zmw,
+        max_zmw,
+        zmws,
+        records,
+    })
 }
 
-/// Merge per-file scans and assign deterministic global ZMW offsets by sorted movie name.
+/// Merge per-file scans and assign each non-empty file a disjoint global ZMW range, in a
+/// deterministic order (by source path).
 fn merge_and_allocate(scans: Vec<FileScan>) -> Result<Merged> {
-    let mut bounds: HashMap<Vec<u8>, (i64, i64)> = HashMap::new();
-    let mut pairs: HashSet<(Vec<u8>, i64)> = HashSet::new();
-    let mut seen_qnames: HashSet<Vec<u8>> = HashSet::new();
+    let mut files: Vec<FileScan> = scans.into_iter().filter(|s| s.records > 0).collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut table: HashMap<PathBuf, (i64, i64)> = HashMap::with_capacity(files.len());
+    let mut map_rows: Vec<MapRow> = Vec::new();
+    let mut offset = 0i64;
     let mut records = 0u64;
 
-    for scan in scans {
-        for (movie, (min, max)) in scan.movie_bounds {
-            bounds
-                .entry(movie)
-                .and_modify(|(lo, hi)| {
-                    if min < *lo {
-                        *lo = min;
-                    }
-                    if max > *hi {
-                        *hi = max;
-                    }
-                })
-                .or_insert((min, max));
+    for file in &files {
+        table.insert(file.path.clone(), (file.min_zmw, offset));
+        let source_bam = file
+            .path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        for &zmw in &file.zmws {
+            map_rows.push(MapRow {
+                source_bam: source_bam.clone(),
+                original_movie: file.movie.clone(),
+                original_zmw: zmw,
+                new_zmw: offset + (zmw - file.min_zmw) + 1,
+            });
         }
-        pairs.extend(scan.pairs);
-        for qname in scan.qnames {
-            if seen_qnames.contains(&qname) {
-                return Err(Error::pacbio(format!(
-                    "duplicate PBSIM3 subread QNAME before merge: {}",
-                    String::from_utf8_lossy(&qname)
-                )));
-            }
-            seen_qnames.insert(qname);
-        }
-        records += scan.records;
+        offset += file.max_zmw - file.min_zmw + 1;
+        records += file.records;
     }
 
-    // Assign a non-overlapping ZMW range to each movie in sorted order.
-    let mut movies: Vec<Vec<u8>> = bounds.keys().cloned().collect();
-    movies.sort();
-    let mut table: HashMap<Vec<u8>, (i64, i64)> = HashMap::with_capacity(movies.len());
-    let mut offset = 0i64;
-    for movie in &movies {
-        let (min, max) = bounds[movie];
-        table.insert(movie.clone(), (min, offset));
-        offset += max - min + 1;
-    }
     let capacity = offset;
     if !(1..=2_147_483_647).contains(&capacity) {
         return Err(Error::pacbio(format!(
@@ -258,40 +279,31 @@ fn merge_and_allocate(scans: Vec<FileScan>) -> Result<Merged> {
         )));
     }
 
-    let mut pairs_vec: Vec<(Vec<u8>, i64)> = pairs.into_iter().collect();
-    pairs_vec.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-
     Ok(Merged {
         allocation: Allocation { table, capacity },
-        pairs: pairs_vec,
-        movies: movies.len(),
+        map_rows,
+        source_files: files.len(),
         records,
     })
 }
 
-/// Write the `zmw_map.tsv` mapping every original `(movie, zmw)` to the synthetic identity.
-fn write_zmw_map(
-    path: &Path,
-    pairs: &[(Vec<u8>, i64)],
-    allocation: &Allocation,
-    synthetic_movie: &str,
-) -> Result<()> {
+/// Write the `zmw_map.tsv` mapping every original `(source_bam, movie, zmw)` to the synthetic
+/// identity.
+fn write_zmw_map(path: &Path, rows: &[MapRow], synthetic_movie: &str) -> Result<()> {
     let mut w = BufWriter::new(
         File::create(path)
             .map_err(|e| Error::pacbio(format!("cannot create {}: {e}", path.display())))?,
     );
-    writeln!(w, "original_movie\toriginal_zmw\tmovie\tzmw")?;
-    for (movie, zmw) in pairs {
-        let new_zmw = allocation
-            .map_zmw(movie, *zmw)
-            .expect("every observed movie has an allocation");
+    writeln!(w, "source_bam\toriginal_movie\toriginal_zmw\tmovie\tzmw")?;
+    for row in rows {
         writeln!(
             w,
-            "{}\t{}\t{}\t{}",
-            String::from_utf8_lossy(movie),
-            zmw,
+            "{}\t{}\t{}\t{}\t{}",
+            row.source_bam,
+            String::from_utf8_lossy(&row.original_movie),
+            row.original_zmw,
             synthetic_movie,
-            new_zmw
+            row.new_zmw
         )?;
     }
     w.flush()?;
@@ -334,29 +346,26 @@ fn rewrite_file(
             break;
         }
 
-        let (movie, zmw, rest) = {
+        let (zmw, rest) = {
             let name = record.name().ok_or_else(|| {
                 Error::pacbio(format!("{}: record without QNAME", path.display()))
             })?;
             let bytes: &[u8] = name.as_ref();
             let parsed = parse_subread_name(bytes)?;
-            (parsed.movie.to_vec(), parsed.zmw, parsed.rest.to_vec())
+            (parsed.zmw, parsed.rest.to_vec())
         };
 
-        let new_zmw = allocation.map_zmw(&movie, zmw).ok_or_else(|| {
+        let new_zmw = allocation.map_zmw(path, zmw).ok_or_else(|| {
             Error::pacbio(format!(
-                "{}: no global ZMW for source movie {}",
-                path.display(),
-                String::from_utf8_lossy(&movie)
+                "{}: source file has no allocated ZMW range",
+                path.display()
             ))
         })?;
 
         if record.data().get(&Tag::READ_GROUP).is_none() || record.data().get(&ZM_TAG).is_none() {
             return Err(Error::pacbio(format!(
-                "{}: record lacks RG or zm tag (movie {} zmw {})",
+                "{}: record lacks RG or zm tag (zmw {zmw})",
                 path.display(),
-                String::from_utf8_lossy(&movie),
-                zmw
             )));
         }
 
