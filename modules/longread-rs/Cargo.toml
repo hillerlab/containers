@@ -1,6 +1,6 @@
 [package]
 name = "longread"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Simulate PacBio Iso-Seq reads at scale"
 license = "MIT"
