@@ -70,6 +70,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
     mapping_path: P,
     chrom_sizes_path: Option<P>,
     global_seed: u64,
+    min_transcript_length: u64,
 ) -> Result<ValidatedInput> {
     let records = io::read_bed_records(&bed_path)?;
     let mapping = io::read_transcript_gene(&mapping_path)?;
@@ -80,6 +81,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
 
     let mut errors: Vec<String> = Vec::new();
     let mut warns: Vec<String> = Vec::new();
+    let mut must_ignore = HashSet::new();
 
     // Rule 2: unique transcript name across BED.
     let mut name_counts: HashMap<String, usize> = HashMap::new();
@@ -95,13 +97,14 @@ pub fn load_and_validate<P: AsRef<Path>>(
         }
         record_names.push(name);
     }
+
     for (idx, g) in records.iter().enumerate() {
         let lineno = idx + 1;
         match &record_names[idx] {
             None => errors.push(format!("BED record {lineno}: missing transcript name")),
             Some(n) if name_counts.get(n).copied().unwrap_or(0) > 1 => {
                 errors.push(format!(
-                    "BED record {lineno}: duplicate transcript name '{n}'"
+                    "ERROR: BED record {lineno}: duplicate transcript name '{n}'"
                 ));
             }
             _ => {}
@@ -111,7 +114,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
         let strand = g.strand().and_then(Strand::from_genepred);
         if strand.is_none() {
             errors.push(format!(
-                "BED record {lineno} ('{}'): strand must be '+' or '-'",
+                "ERROR: BED record {lineno} ('{}'): strand must be '+' or '-'",
                 record_names[idx].as_deref().unwrap_or("?")
             ));
         }
@@ -132,11 +135,25 @@ pub fn load_and_validate<P: AsRef<Path>>(
             coding_defined: false,
             seed: global_seed,
         };
+
         if let Err(e) = probe.validate_blocks() {
             errors.push(format!(
-                "BED record {lineno} ('{}'): {e}",
+                "ERROR: BED record {lineno} ('{}'): {e}",
                 record_names[idx].as_deref().unwrap_or("?")
             ));
+        }
+
+        // Rule 4.1: Ensure transcript exonic lenght > min_transcript_length.
+        // If transcript does not comply, exclude it from the validate input and
+        // report as warning
+        let exonic_length = g.exonic_length();
+        if exonic_length < min_transcript_length {
+            warns.push(format!(
+                "BED record {lineno} ('{}'): exonic length ({exonic_length}) is less than minimum length ({min_transcript_length})",
+                record_names[idx].as_deref().unwrap_or("?")
+            ));
+
+            must_ignore.insert(idx);
         }
 
         // Rule 5: within chromosome bounds (only when sizes are supplied).
@@ -144,7 +161,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
             let chrom = String::from_utf8_lossy(g.chrom()).into_owned();
             match sizes.get(&chrom) {
                 None => errors.push(format!(
-                    "BED record {lineno} ('{}'): chromosome '{chrom}' absent from chrom.sizes",
+                    "ERROR: BED record {lineno} ('{}'): chromosome '{chrom}' absent from chrom.sizes",
                     record_names[idx].as_deref().unwrap_or("?")
                 )),
                 Some(&size) => {
@@ -152,7 +169,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
                         let max_end = exons.iter().map(|e| e.1).max().unwrap_or(0);
                         if max_end > size {
                             errors.push(format!(
-                                "BED record {lineno} ('{}'): end {max_end} exceeds chromosome '{chrom}' size {size}",
+                                "ERROR: BED record {lineno} ('{}'): end {max_end} exceeds chromosome '{chrom}' size {size}",
                                 record_names[idx].as_deref().unwrap_or("?")
                             ));
                         }
@@ -170,12 +187,13 @@ pub fn load_and_validate<P: AsRef<Path>>(
             .or_default()
             .push((m.gene.clone(), m.line));
     }
+
     // Rule 7: a transcript mapped more than once (to any gene) is rejected.
     for (tx, genes) in &mapping_by_tx {
         if genes.len() > 1 {
             let detail: Vec<String> = genes.iter().map(|(g, l)| format!("{g}@line {l}")).collect();
             errors.push(format!(
-                "transcript '{tx}' has multiple mapping entries: {}",
+                "ERROR: transcript '{tx}' has multiple mapping entries: {}",
                 detail.join(", ")
             ));
         }
@@ -187,7 +205,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
     for name in &bed_name_set {
         if !mapping_by_tx.contains_key(*name) {
             errors.push(format!(
-                "BED transcript '{name}' has no transcript→gene mapping"
+                "ERROR: BED transcript '{name}' has no transcript→gene mapping"
             ));
         }
     }
@@ -225,7 +243,7 @@ pub fn load_and_validate<P: AsRef<Path>>(
             let mut labels: Vec<String> = distinct.iter().map(|k| k.replace('\t', ":")).collect();
             labels.sort();
             errors.push(format!(
-                "gene '{gene}' spans multiple chromosome/strand combinations: {}",
+                "ERROR: gene '{gene}' spans multiple chromosome/strand combinations: {}",
                 labels.join(", ")
             ));
         }
@@ -271,13 +289,17 @@ pub fn load_and_validate<P: AsRef<Path>>(
         warns.dedup();
 
         for warn in warns {
-            println!("  {}", warn);
+            println!("WARN:  {}", warn);
         }
     }
 
     // All checks passed — assemble the validated model.
     let mut genes_map: BTreeMap<String, GeneModel> = BTreeMap::new();
     for (idx, g) in records.iter().enumerate() {
+        if must_ignore.contains(&idx) {
+            continue;
+        }
+
         let name = record_names[idx].clone().expect("validated: name present");
         let strand = g
             .strand()

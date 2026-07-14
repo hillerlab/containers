@@ -93,6 +93,7 @@ pub fn run(params: &PrepareParams) -> Result<(Stats, PrepareOutputs)> {
         &params.transcript_gene,
         params.chrom_sizes.as_ref(),
         params.seed,
+        params.min_transcript_length,
     )?;
 
     // 2. Generate synthetic isoforms per gene (deterministic in thread count).
