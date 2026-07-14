@@ -10,7 +10,9 @@ RUN echo "Building version ${MODULE_VERSION}"
 
 WORKDIR /src
 
-RUN apt-get update && apt-get install -y --no-install-recommends pkg-config \
+# gcc: the `libdeflate-sys` crate (fast bgzf codec used by the PacBio BAM subcommands)
+# compiles bundled C sources with the `cc` crate.
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config gcc \
     && rm -rf /var/lib/apt/lists/*
 
 COPY modules/longread-rs/Cargo.toml modules/longread-rs/Cargo.lock ./

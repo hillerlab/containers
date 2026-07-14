@@ -15,6 +15,7 @@ pub mod fusion;
 pub mod generate;
 pub mod io;
 pub mod model;
+pub mod pacbio;
 pub mod pbsim;
 pub mod prepare;
 pub mod report;
