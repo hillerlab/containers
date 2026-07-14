@@ -190,14 +190,6 @@ pub fn load_and_validate<P: AsRef<Path>>(
             ));
         }
     }
-    // Rule 8: mapping entries absent from BED.
-    for tx in mapping_by_tx.keys() {
-        if !bed_name_set.contains(tx.as_str()) {
-            errors.push(format!(
-                "mapping entry '{tx}' is absent from the BED annotation"
-            ));
-        }
-    }
 
     // Resolve a single gene per transcript (only meaningful for singletons).
     let tx_gene: HashMap<String, String> = mapping_by_tx
