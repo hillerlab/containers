@@ -40,6 +40,7 @@ ENV PATH=/opt/conda/bin:$PATH
 
 COPY --from=rustbuild /src/target/release/longread /opt/conda/bin/longread
 COPY --from=rustbuild /opt/xloci/bin/xloci /opt/conda/bin/xloci
+COPY --from=rustbuild /opt/chromsize/bin/chromsize /opt/conda/bin/chromsize
 
 COPY modules/longread/assets/pbsim_models /opt/pbsim_models
 ENV PBSIM3_MODELS=/opt/pbsim_models
