@@ -7,3 +7,6 @@
 [submodule "modules/softmask"]
 	path = modules/softmask
 	url = https://github.com/hillerlab/softmask
+[submodule "modules/longread"]
+	path = modules/longread
+	url = https://github.com/hillerlab/longread
