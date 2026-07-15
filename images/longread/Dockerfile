@@ -22,6 +22,7 @@ COPY modules/longread/modules/longread/src ./src
 
 RUN cargo build --release --locked && strip target/release/longread
 RUN cargo install xloci --version 0.0.4 --root /opt/xloci --locked
+RUN cargo install chromsize --version 0.0.34 --root /opt/chromsize --locked
 
 # ---------- Build Stage - Mamba ----------------
 FROM mambaorg/micromamba:1.5.8-bookworm-slim
@@ -46,6 +47,7 @@ ENV PBSIM3_MODELS=/opt/pbsim_models
 RUN ln -s /opt/conda/bin/pbsim /opt/conda/bin/pbsim3
 
 RUN longread --help >/dev/null \
-    && xloci --help >/dev/null 
+    && xloci --help >/dev/null \
+    && chromsize --help >/dev/null
 
 CMD ["bash"]
