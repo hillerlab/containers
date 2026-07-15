@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     gcc \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
