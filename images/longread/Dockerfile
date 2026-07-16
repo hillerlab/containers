@@ -31,6 +31,7 @@ FROM mambaorg/micromamba:1.5.8-bookworm-slim
 RUN micromamba install -y -n base -c bioconda -c conda-forge \
         pbsim3=3.0.4 \
         pbccs=6.4.0 \
+        pbtk=3.5.0 \
         isoseq=4.0.0 \
         lima samtools=1.21 \
         procps-ng \
