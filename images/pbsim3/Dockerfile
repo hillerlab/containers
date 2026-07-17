@@ -1,3 +1,7 @@
+# syntax=docker/dockerfile:1.7
+
+# Copyright (c) 2026 The Hiller Lab at the Senckenberg Gessellschaft für Naturforschung
+# Distributed under the terms of the Apache License, Version 2.0.
 
 FROM mambaorg/micromamba:1.5.8-bookworm-slim
 ARG MODULE_VERSION
