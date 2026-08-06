@@ -3,7 +3,7 @@
 # Copyright (c) 2026 The Hiller Lab at the Senckenberg Gessellschaft für Naturforschung
 # Distributed under the terms of the Apache License, Version 2.0.
 
-FROM rust:1.90-bookworm AS builder
+FROM rust:1.93-bookworm AS builder
 ARG MODULE_VERSION
 LABEL module.version="${MODULE_VERSION}"
 RUN echo "Building version ${MODULE_VERSION}"
