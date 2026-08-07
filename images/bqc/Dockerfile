@@ -10,6 +10,7 @@ RUN echo "Building version ${MODULE_VERSION}"
 
 RUN cargo install bqc \
     --version "${MODULE_VERSION}" \
+    --all-features \
     --locked \
     --root /opt/bqc
 
