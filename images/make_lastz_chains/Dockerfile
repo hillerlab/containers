@@ -20,7 +20,7 @@ run cargo install \
         --all-features \
         --locked \
         --root /opt/rust-tools \
-        --version 0.0.8 \
+        --version 0.0.9 \
         chaintools \
     && cargo install \
         --all-features \
@@ -28,7 +28,13 @@ run cargo install \
         --force \
         --root /opt/rust-tools \
         --version 0.0.3 \
-        psltools
+        psltools \
+    && cargo install \
+        --all-features \
+        --locked \
+        --root /opt/rust-tools \
+        --version 0.0.1 \
+        chainc
         
 
 # ---------- Build Stage - LASTZ ----------
@@ -125,7 +131,6 @@ RUN set -eux; \
         hg/mouseStuff/chainSort \
         hg/mouseStuff/chainNet; \
     build_kent /build/kent-455 /opt/kent-455 \
-        hg/mouseStuff/chainCleaner \
         hg/mouseStuff/chainScore
 
 # ---------- Runtime Stage ----------
@@ -155,6 +160,7 @@ RUN apk add --no-cache \
 COPY --from=rust-builder /opt/rust-tools/bin/chaintools /usr/local/bin/chaintools
 COPY --from=rust-builder /opt/rust-tools/bin/chromsize /usr/local/bin/chromsize
 COPY --from=rust-builder /opt/rust-tools/bin/psltools /usr/local/bin/psltools
+COPY --from=rust-builder /opt/rust-tools/bin/chainc /usr/local/bin/chainc
 COPY --from=lastz-builder /opt/lastz/bin/lastz /usr/local/bin/lastz
 COPY --from=kent-builder /opt/kent-482/bin/ /usr/local/bin/
 COPY --from=kent-builder /opt/kent-455/bin/ /usr/local/bin/
@@ -181,6 +187,7 @@ RUN chmod 0755 \
     && chaintools --version \
     && chromsize --version \
     && psltools --version \
+    && chainc --version \
     && { lastz --version || test "$?" -eq 1; } \
     && repeat_filler --help >/dev/null \
     && partition.py --help >/dev/null \
