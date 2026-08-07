@@ -1,18 +1,17 @@
 <p align="center">
-<p align="center">
   <picture>
     <source
       media="(prefers-color-scheme: dark)"
-      srcset="./assets/hillerlab-dark.png"
+      srcset="./assets/figures/hillerlab-dark.png"
     >
     <source
       media="(prefers-color-scheme: light)"
-      srcset="./assets/hillerlab-light.png"
+      srcset="./assets/figures/hillerlab-light.png"
     >
     <img
       width="200"
       alt="Hiller Lab"
-      src="./assets/hillerlab-light.png"
+      src="./assets/figures/hillerlab-light.png"
     >
   </picture>
 </p>
@@ -33,17 +32,24 @@
     <samp>
         <span> container repository for</span>
         <br>
-        <span> The Hiller Lab at the Senckenberg Gessellschaft für Naturforschung </span>
+        <span> The Hiller Lab at the Senckenberg Gesellschaft für Naturforschung </span>
         <br>
         <br>
+        <a href="https://github.com/hillerlab/containers/blob/master/assets/catalog/catalog.md">catalog</a> .
         <a href="https://en.wikipedia.org/wiki/Containerization_(computing)">container</a> .
-        <a href="https://www.docker.com/">docker</a> .
-        <a href="https://apptainer.org/">singularity</a> .
-        <a href="https://podman.io/">podman</a> 
+        <a href="https://hillerlab.com/">us</a> 
     </samp>
   </p>
 
 </p>
+
+---
+
+> [!TIP]
+> - [Browse the image catalog](assets/catalog/catalog.md) for a list of all containers we maintain.
+> - We also offer a collection of workflow modules (nextflow/wdl) at [github.com/hillerlab/core](https://github.com/hillerlab/core).
+
+--- 
 
 ***
 ```
