@@ -1,0 +1,25 @@
+{
+  "images": {
+    "cesar2": {
+      "repo": "hillerlab/CESAR2.0"
+    },
+    "chainc": {
+      "repo": "hillerlab/chainc"
+    },
+    "longread": {
+      "repo": "hillerlab/longread"
+    },
+    "make_lastz_chains": {
+      "repo": "hillerlab/make_lastz_chains"
+    },
+    "softmask": {
+      "repo": "hillerlab/softmask"
+    },
+    "pandepth": {
+      "repo": "HuiyangYu/PanDepth"
+    },
+    "bqc": {
+      "repo": "hillerlab/bqc"
+    }
+  }
+}
