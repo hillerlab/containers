@@ -44,14 +44,6 @@ COPY --from=builder /opt/hmmcleaner/perl5 /opt/hmmcleaner/perl5
 COPY images/hmmcleaner/VERSION /opt/hmmcleaner/VERSION
 ENV PERL5LIB="/opt/hmmcleaner/perl5/lib/perl5"
 ENV PATH="/opt/hmmcleaner/perl5/bin:${PATH}"
-# libxml2 / libexpat1 / libgsl27 + libgslcblas0 are the runtime counterparts
-# of the -dev headers pulled in above to compile XS modules. Verified the
-# -dev -> runtime package mapping against Ubuntu 24.04's apt metadata; bookworm
-# is very likely identical but wasn't checked directly, so confirm with
-# `apt-cache depends libgsl-dev` in your own build environment. The more
-# reliable check is `ldd` on the .so files under /opt/hmmcleaner/perl5 after
-# a build, to see exactly what's actually linked rather than guessing from
-# the -dev package names.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         perl \
