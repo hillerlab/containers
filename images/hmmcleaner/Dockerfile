@@ -3,6 +3,9 @@
 # Distributed under the terms of the Apache License, Version 2.0.
 
 FROM debian:bookworm-slim AS builder
+ARG MODULE_VERSION
+LABEL module.version="${MODULE_VERSION}"
+RUN echo "Building version ${MODULE_VERSION}"
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
