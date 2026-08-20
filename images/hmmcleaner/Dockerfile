@@ -20,6 +20,8 @@ RUN apt-get update && \
         libgsl-dev && \
     rm -rf /var/lib/apt/lists/* && \
     cpanm --local-lib-contained=/opt/hmmcleaner/perl5 --notest \
+        Test2::Suite \
+        Test::Files \
         Moose \
         Modern::Perl \
         Getopt::Euclid \
