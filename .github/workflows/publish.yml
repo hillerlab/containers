@@ -101,7 +101,7 @@ jobs:
                 --arg image "$image_name" \
                 --arg dockerfile "$dockerfile" \
                 --arg version "$version" \
-                --arg package "ghcr.io/hillerlab/${image_name}" \
+                --arg package "ghcr.io/casparbein/${image_name}" \
                 '{image: $image, dockerfile: $dockerfile, version: $version, package: $package}')")
             else
               echo "⏭️  $image_name: $reason — skipping"
