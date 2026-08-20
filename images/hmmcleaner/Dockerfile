@@ -1,4 +1,4 @@
-\# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7
 # Copyright (c) 2026 The Hiller Lab at the Senckenberg Gesellschaft für Naturforschung
 # Distributed under the terms of the Apache License, Version 2.0.
 
