@@ -40,6 +40,8 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           args=()
           if [[ "${DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
