@@ -55,7 +55,13 @@ RUN python3 -m venv toga2 && \
     make
 
 # Permanently "activate" the venv for every future RUN/ENTRYPOINT/CMD and for
-# the running container.
+# the running container. The original Apptainer file did this via
+# `source /opt/TOGA2/toga2/bin/activate` in %environment, re-run on every
+# container invocation — Docker's ENV can't execute a script, so this bakes
+# in the equivalent effect (prepend the venv's bin dir, set VIRTUAL_ENV)
+# once, into the image itself. Without this, python3 resolves to the base
+# conda install instead, which never had ete3/tensorflow/spliceai/etc.
+# installed — that's what caused the ModuleNotFoundError.
 ENV VIRTUAL_ENV=/opt/TOGA2/toga2
 ENV PATH="/opt/TOGA2/toga2/bin:${PATH}"
 
@@ -72,7 +78,7 @@ cd /opt/TOGA2
 export SLURM_CONF="${SLURM_CONF}"
 export NXF_HOME="${TMPDIR}/.nextflow"
 export EXEC_DIR="${EXEC_DIR}"
-export PATH="${EXEC_DIR}:/root/.cargo/bin:/opt/nextflow:/opt/conda/bin:/opt/TOGA2:/opt/TOGA2/bin:/opt/TOGA2/bin/prank:/opt/TOGA2/bin/iqtree2:/opt/TOGA2/bin/intronIC:${PATH}"
+export PATH="${EXEC_DIR}:/opt/TOGA2/toga2/bin:/root/.cargo/bin:/opt/nextflow:/opt/conda/bin:/opt/TOGA2:/opt/TOGA2/bin:/opt/TOGA2/bin/prank:/opt/TOGA2/bin/iqtree2:/opt/TOGA2/bin/intronIC:${PATH}"
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${LIB_DIR}"
 
 exec "$@"
