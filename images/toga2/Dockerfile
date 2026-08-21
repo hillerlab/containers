@@ -54,6 +54,11 @@ RUN python3 -m venv toga2 && \
     . toga2/bin/activate && \
     make
 
+# Permanently "activate" the venv for every future RUN/ENTRYPOINT/CMD and for
+# the running container.
+ENV VIRTUAL_ENV=/opt/TOGA2/toga2
+ENV PATH="/opt/TOGA2/toga2/bin:${PATH}"
+
 # dummy user for Slurm, as in the original %runscript
 RUN adduser --disabled-password --gecos "" slurm
 
