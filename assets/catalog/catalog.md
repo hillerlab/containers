@@ -60,6 +60,7 @@ All container images are published to `ghcr.io/hillerlab/<name>`.
 
 - [rustar-aligner-cbq](https://github.com/hillerlab/containers/pkgs/container/rustar-aligner-cbq) — Rust reimplementation of the STAR RNA-seq aligner with CBQ input
 - [spliceai](https://github.com/hillerlab/containers/pkgs/container/spliceai) — deep-learning splice-site prediction for RNA-seq
+- [splicetransformer](https://github.com/hillerlab/containers/pkgs/container/splicetransformer) — deep-learning splice-site prediction with SpliceTransformer (tissue-specific, genome-wide)
 - [intronic](https://github.com/hillerlab/containers/pkgs/container/intronic) — classify U2- vs U12-type introns using an SVM
 - [join_junctions](https://github.com/hillerlab/containers/pkgs/container/join_junctions) — merge splice-junction calls across files into consensus junctions
 - [transmeta](https://github.com/hillerlab/containers/pkgs/container/transmeta) — multi-sample RNA-seq transcript assembler
