@@ -19,6 +19,8 @@ RUN cargo build --release --locked --manifest-path ./splicetransformer/derive/Ca
 # ---------- Build Stage - Python ----------
 FROM python:3.11-slim-bookworm AS runtime
 ARG MODULE_VERSION
+ARG SPTRANSFORMER_MODEL_URL=https://media.githubusercontent.com/media/ShenLab-Genomics/SpliceTransformer/release1/model/weights/SpTransformer_pytorch.ckpt
+ARG SPTRANSFORMER_MODEL_SHA256=bf9937c234139f850a770f84a26c65213a80d696d82426949a432ed1ccb9aa4e
 LABEL module.version="${MODULE_VERSION}"
 RUN echo "Building version ${MODULE_VERSION}"
 
@@ -38,8 +40,35 @@ COPY --from=rust-builder /build/splicetransformer/chunk/target/release/splicetra
 COPY --from=rust-builder /build/splicetransformer/derive/target/release/splicetransformer-derive /usr/local/bin/splicetransformer-derive
 COPY modules/splicetransformer/py/splicetransformer.py /usr/local/bin/splicetransformer.py
 COPY modules/splicetransformer/py/model /usr/local/bin/model
-COPY modules/splicetransformer/model/weights/SpTransformer_pytorch.ckpt /models/SpTransformer_pytorch.ckpt
-RUN mkdir -p /models
+
+# Keep the 120 MB checkpoint out of this repository; fetch the pinned upstream GitHub LFS object.
+RUN mkdir -p /models \
+    && python - "${SPTRANSFORMER_MODEL_URL}" "${SPTRANSFORMER_MODEL_SHA256}" <<'PY'
+import hashlib
+import os
+import sys
+import tempfile
+import urllib.request
+
+url, expected_sha256 = sys.argv[1:]
+destination = "/models/SpTransformer_pytorch.ckpt"
+request = urllib.request.Request(url, headers={"User-Agent": "hillerlab-splicetransformer"})
+with urllib.request.urlopen(request, timeout=300) as response:
+    digest = hashlib.sha256()
+    with tempfile.NamedTemporaryFile(dir="/models", delete=False) as output:
+        temporary = output.name
+        while chunk := response.read(1024 * 1024):
+            digest.update(chunk)
+            output.write(chunk)
+
+actual_sha256 = digest.hexdigest()
+if actual_sha256 != expected_sha256:
+    os.unlink(temporary)
+    raise SystemExit(
+        f"SpliceTransformer checkpoint checksum mismatch: expected {expected_sha256}, got {actual_sha256}"
+    )
+os.replace(temporary, destination)
+PY
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
