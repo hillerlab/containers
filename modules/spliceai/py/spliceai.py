@@ -13,7 +13,7 @@ __author__ = "Alejandro Gonzales-Irribarren"
 __credits__ = ["Yury V. Malovichko", "Michael Hiller"]
 __email__ = "alejandrxgzi@gmail.com"
 __github__ = "https://github.com/alejandrogzi"
-__version__ = "0.0.2"
+__version__ = "0.0.4"
 
 import argparse
 import gzip
@@ -32,6 +32,7 @@ HEADER_PATTERN = re.compile(
 MODEL_FILENAMES = tuple(f"spliceai{x}.h5" for x in range(1, 6))
 CONTEXT = 10000
 DEFAULT_FLANK_SIZE = 50000
+_RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
 
 class Logger:
@@ -343,6 +344,30 @@ def parse_header(header: str, logger: Logger) -> tuple[str, int, int, bool]:
     return chrom, start, end, strand
 
 
+def reverse_complement(seq: str) -> str:
+    """Reverse-complement a DNA sequence. Chunk FASTA is genomic for both strands."""
+    return seq.translate(_RC_TABLE)[::-1]
+
+
+def wig_inner_slice(
+    len_seq: int, start_offset: int, end_offset: int, plus: bool
+) -> tuple[int, int]:
+    """Inner-chunk slice into transcript-oriented predictions.
+
+    Header coords are 0-based half-open; WIG is 1-based with start=header_start+2.
+    Full inner chunk is `chunk_length` values (last WIG coord = end+1). That last
+    coordinate is past chrom size only on a terminal chunk, detected as no right
+    flank (`end_offset == 0`). Clip that one value so last == `end`.
+
+    Minus-strand scores are in RC/transcript order; dropping the last WIG value
+    means dropping the *first* index of the pre-reverse slice.
+    """
+    clip = 1 if end_offset == 0 else 0
+    if plus:
+        return start_offset, len_seq - end_offset - clip
+    return end_offset + clip, len_seq - start_offset
+
+
 def one_hot_encode(seq: str):
     """One-hot encode a DNA sequence.
 
@@ -558,45 +583,38 @@ def process_record(
         f"end_offset={end_offset}, sequence_length={len(seq)}"
     )
 
+    if not strand:
+        seq = reverse_complement(seq)
+
     x = one_hot_encode("N" * (CONTEXT // 2) + seq + "N" * (CONTEXT // 2))[None, :]
     y = np.mean([model.predict(x, verbose=0) for model in models], axis=0)
 
     acceptor_prob = y[0, :, 1]
     donor_prob = y[0, :, 2]
-    # fixedStep start = start + 2 is a calibrated skip of each chunk's first base;
-    # it makes the tracked interval [start+2, end] (header coords are 0-based
-    # half-open), so emit chunk_length - 1 values: the last lands on `end` (the
-    # chromosome length for a terminal chunk), never on end+1 (which would make
-    # wigToBigWig reject the file).
+    # fixedStep start = start+2 matches splice sites in the browser (donor on
+    # G of GT). Terminal chunks (no right flank) drop one value so last <= end.
     wiggle_header = WIGGLE_HEADER_TEMPLATE.format(chrom, start + 2)
 
     acc_plus_handle, donor_plus_handle, acc_minus_handle, donor_minus_handle = (
         wig_handles
     )
+    start_index, end_index = wig_inner_slice(
+        len(seq), start_offset, end_offset, plus=strand
+    )
+    acceptor_slice = acceptor_prob[start_index:end_index]
+    donor_slice = donor_prob[start_index:end_index]
 
     if strand:
         acc_plus_handle.write(wiggle_header)
         donor_plus_handle.write(wiggle_header)
-
-        start_index = start_offset
-        end_index = len(seq) - end_offset - 1
-        acceptor_prob = acceptor_prob[start_index:end_index]
-        donor_prob = donor_prob[start_index:end_index]
-
-        write_probabilities(donor_plus_handle, donor_prob, round_to, min_prob)
-        write_probabilities(acc_plus_handle, acceptor_prob, round_to, min_prob)
+        write_probabilities(donor_plus_handle, donor_slice, round_to, min_prob)
+        write_probabilities(acc_plus_handle, acceptor_slice, round_to, min_prob)
         return
 
     acc_minus_handle.write(wiggle_header)
     donor_minus_handle.write(wiggle_header)
-
-    start_index = end_offset + 1  # drops (after reversal) the value at fixedStep end+1
-    end_index = len(seq) - start_offset
-    acceptor_prob = acceptor_prob[start_index:end_index][::-1]
-    donor_prob = donor_prob[start_index:end_index][::-1]
-
-    write_probabilities(donor_minus_handle, donor_prob, round_to, min_prob)
-    write_probabilities(acc_minus_handle, acceptor_prob, round_to, min_prob)
+    write_probabilities(donor_minus_handle, donor_slice[::-1], round_to, min_prob)
+    write_probabilities(acc_minus_handle, acceptor_slice[::-1], round_to, min_prob)
 
 
 def run(args: argparse.Namespace, logger: Logger) -> None:
