@@ -261,9 +261,34 @@ def test_st_minus_rc_donor(st) -> None:
     start, values = parse_wig(donor_minus)
     assert start == 102
     # RC: seq_rc[68] is G of GT (complement of genomic C at seq[71] = genomic 151)
-    # minus slice [20:120][::-1] maps transcript 68 → reversed index 51 → 1-based 153
-    assert peak_index(values) == 51, peak_index(values)
-    assert start + peak_index(values) == 153
+    # minus slice [20:120][::-1] maps transcript 68 → reversed index 51, then
+    # MINUS_GENOMIC_SHIFT=2 rolls left → index 49 → 1-based 151
+    assert peak_index(values) == 49, peak_index(values)
+    assert start + peak_index(values) == 151
+
+
+def test_st_minus_both_tracks_shifted_genomic_minus_2(st) -> None:
+    seq = "N" * 20 + "N" * 100 + "N" * 20
+    idx = 70
+
+    def predict(seq_padded, models, device, logger):
+        return _st_predict_index(
+            seq_padded, models, device, logger, st.CONTEXT_HALF, idx
+        )
+
+    st._predict_windows = predict
+    _, _, acc_minus, donor_minus = run_process(
+        st, "chr19:100-200(-)", seq, [object()], 20
+    )
+    acc_start, acc_vals = parse_wig(acc_minus)
+    don_start, don_vals = parse_wig(donor_minus)
+    assert acc_start == don_start == 102
+    # transcript idx 70 → slice 50 → reversed 49, then genomic -2 → 47 → 1-based 149
+    assert peak_index(don_vals) == 47, peak_index(don_vals)
+    assert don_start + peak_index(don_vals) == 149
+    # acceptor also rolled -2 in transcript (idx 68 → reverse 51) then genomic -2 → 49
+    assert peak_index(acc_vals) == 49, peak_index(acc_vals)
+    assert acc_start + peak_index(acc_vals) == 151
 
 
 def test_spliceai_minus_rc_donor(spliceai) -> None:
@@ -280,8 +305,8 @@ def test_spliceai_minus_rc_donor(spliceai) -> None:
     )
     start, values = parse_wig(donor_minus)
     assert start == 102
-    assert peak_index(values) == 51, peak_index(values)
-    assert start + peak_index(values) == 153
+    assert peak_index(values) == 49, peak_index(values)
+    assert start + peak_index(values) == 151
 
 
 def test_spliceai_plus_donor_unshifted(spliceai) -> None:
@@ -321,12 +346,14 @@ def main() -> None:
     os.environ.pop("SPLICETRANSFORMER_MOCK", None)
     test_st_acceptor_shift(splicetransformer)
     test_st_minus_rc_donor(splicetransformer)
+    test_st_minus_both_tracks_shifted_genomic_minus_2(splicetransformer)
     test_spliceai_minus_rc_donor(spliceai)
     test_spliceai_plus_donor_unshifted(spliceai)
 
     print(
         "OK: terminal clip last==end, middle n=chunk_length, "
-        "minus RC donor maps to genomic GT, ST acceptor -2 vs donor"
+        "minus RC donor maps to genomic GT, minus tracks rolled -2 genomic, "
+        "ST plus acceptor -2 vs donor"
     )
 
 

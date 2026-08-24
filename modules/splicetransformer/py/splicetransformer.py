@@ -14,7 +14,7 @@ __author__ = "Alejandro Gonzales-Irribarren"
 __credits__ = ["Yury V. Malovichko", "Michael Hiller"]
 __email__ = "alejandrxgzi@gmail.com"
 __github__ = "https://github.com/alejandrogzi"
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 import argparse
 import gzip
@@ -42,6 +42,10 @@ MODEL_FILENAME = "SpTransformer_pytorch.ckpt"
 # ST labels the first exonic nt as acceptor; this lab's SpliceAI tracks sit on
 # the G of AG (2 bp upstream). Shift acceptor in transcript space before WIG.
 ACCEPTOR_SHIFT = 2
+# start+2 and ACCEPTOR_SHIFT are plus-oriented (intron to the right). After RC
+# and reversing scores to genomic order, both minus tracks sit 2 bp too far
+# downstream in the forward sense. Roll them back in genomic space.
+MINUS_GENOMIC_SHIFT = 2
 _RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
 
@@ -205,8 +209,8 @@ def wig_inner_slice(
     return end_offset + clip, len_seq - start_offset
 
 
-def shift_acceptor(values, shift: int = ACCEPTOR_SHIFT):
-    """Move acceptor scores `shift` bp toward 5' in transcript space; pad 3' with 0."""
+def roll_left(values, shift: int):
+    """Move scores `shift` bp toward lower indices; pad the 3' end with 0."""
     import numpy as np
 
     arr = np.asarray(values, dtype=float)
@@ -216,6 +220,11 @@ def shift_acceptor(values, shift: int = ACCEPTOR_SHIFT):
     if 0 < shift < arr.size:
         out[: arr.size - shift] = arr[shift:]
     return out
+
+
+def shift_acceptor(values, shift: int = ACCEPTOR_SHIFT):
+    """Move acceptor scores `shift` bp toward 5' in transcript space."""
+    return roll_left(values, shift)
 
 
 def one_hot_encode(seq: str):
@@ -575,8 +584,10 @@ def process_record(
 
     acc_minus_handle.write(wiggle_header)
     donor_minus_handle.write(wiggle_header)
-    write_probabilities(donor_minus_handle, donor_slice[::-1], round_to, min_prob)
-    write_probabilities(acc_minus_handle, acceptor_slice[::-1], round_to, min_prob)
+    donor_slice = roll_left(donor_slice[::-1], MINUS_GENOMIC_SHIFT)
+    acceptor_slice = roll_left(acceptor_slice[::-1], MINUS_GENOMIC_SHIFT)
+    write_probabilities(donor_minus_handle, donor_slice, round_to, min_prob)
+    write_probabilities(acc_minus_handle, acceptor_slice, round_to, min_prob)
 
 
 def run(args: argparse.Namespace, logger: Logger) -> None:
