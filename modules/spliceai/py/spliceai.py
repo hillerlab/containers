@@ -13,7 +13,7 @@ __author__ = "Alejandro Gonzales-Irribarren"
 __credits__ = ["Yury V. Malovichko", "Michael Hiller"]
 __email__ = "alejandrxgzi@gmail.com"
 __github__ = "https://github.com/alejandrogzi"
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 import argparse
 import gzip
@@ -32,6 +32,10 @@ HEADER_PATTERN = re.compile(
 MODEL_FILENAMES = tuple(f"spliceai{x}.h5" for x in range(1, 6))
 CONTEXT = 10000
 DEFAULT_FLANK_SIZE = 50000
+# start+2 is plus-oriented (intron to the right of the donor). After RC and
+# reversing scores to genomic order, minus tracks sit 2 bp too far downstream
+# in the forward sense. Roll them back in genomic space.
+MINUS_GENOMIC_SHIFT = 2
 _RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
 
@@ -349,6 +353,19 @@ def reverse_complement(seq: str) -> str:
     return seq.translate(_RC_TABLE)[::-1]
 
 
+def roll_left(values, shift: int):
+    """Move scores `shift` bp toward lower indices; pad the 3' end with 0."""
+    import numpy as np
+
+    arr = np.asarray(values, dtype=float)
+    if shift <= 0:
+        return arr
+    out = np.zeros_like(arr)
+    if 0 < shift < arr.size:
+        out[: arr.size - shift] = arr[shift:]
+    return out
+
+
 def wig_inner_slice(
     len_seq: int, start_offset: int, end_offset: int, plus: bool
 ) -> tuple[int, int]:
@@ -613,8 +630,10 @@ def process_record(
 
     acc_minus_handle.write(wiggle_header)
     donor_minus_handle.write(wiggle_header)
-    write_probabilities(donor_minus_handle, donor_slice[::-1], round_to, min_prob)
-    write_probabilities(acc_minus_handle, acceptor_slice[::-1], round_to, min_prob)
+    donor_slice = roll_left(donor_slice[::-1], MINUS_GENOMIC_SHIFT)
+    acceptor_slice = roll_left(acceptor_slice[::-1], MINUS_GENOMIC_SHIFT)
+    write_probabilities(donor_minus_handle, donor_slice, round_to, min_prob)
+    write_probabilities(acc_minus_handle, acceptor_slice, round_to, min_prob)
 
 
 def run(args: argparse.Namespace, logger: Logger) -> None:
