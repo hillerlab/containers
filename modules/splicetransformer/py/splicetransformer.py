@@ -14,7 +14,7 @@ __author__ = "Alejandro Gonzales-Irribarren"
 __credits__ = ["Yury V. Malovichko", "Michael Hiller"]
 __email__ = "alejandrxgzi@gmail.com"
 __github__ = "https://github.com/alejandrogzi"
-__version__ = "0.0.1"
+__version__ = "0.0.3"
 
 import argparse
 import gzip
@@ -39,6 +39,10 @@ WINDOW_OUT = (
     MAX_SEQ_LEN - CONTEXT
 )  # 192  ponytail: naive stride=192, batch=1; batched windows if throughput matters
 MODEL_FILENAME = "SpTransformer_pytorch.ckpt"
+# ST labels the first exonic nt as acceptor; this lab's SpliceAI tracks sit on
+# the G of AG (2 bp upstream). Shift acceptor in transcript space before WIG.
+ACCEPTOR_SHIFT = 2
+_RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
 
 class Logger:
@@ -175,6 +179,43 @@ def parse_header(header: str, logger: Logger) -> tuple[str, int, int, bool]:
     if end <= start:
         fail(logger, f"Sequence {header} has invalid coordinates: end must be > start")
     return chrom, start, end, strand
+
+
+def reverse_complement(seq: str) -> str:
+    """Reverse-complement a DNA sequence. Chunk FASTA is genomic for both strands."""
+    return seq.translate(_RC_TABLE)[::-1]
+
+
+def wig_inner_slice(
+    len_seq: int, start_offset: int, end_offset: int, plus: bool
+) -> tuple[int, int]:
+    """Inner-chunk slice into transcript-oriented predictions.
+
+    Header coords are 0-based half-open; WIG is 1-based with start=header_start+2.
+    Full inner chunk is `chunk_length` values (last WIG coord = end+1). That last
+    coordinate is past chrom size only on a terminal chunk, detected as no right
+    flank (`end_offset == 0`). Clip that one value so last == `end`.
+
+    Minus-strand scores are in RC/transcript order; dropping the last WIG value
+    means dropping the *first* index of the pre-reverse slice.
+    """
+    clip = 1 if end_offset == 0 else 0
+    if plus:
+        return start_offset, len_seq - end_offset - clip
+    return end_offset + clip, len_seq - start_offset
+
+
+def shift_acceptor(values, shift: int = ACCEPTOR_SHIFT):
+    """Move acceptor scores `shift` bp toward 5' in transcript space; pad 3' with 0."""
+    import numpy as np
+
+    arr = np.asarray(values, dtype=float)
+    if shift <= 0:
+        return arr
+    out = np.zeros_like(arr)
+    if 0 < shift < arr.size:
+        out[: arr.size - shift] = arr[shift:]
+    return out
 
 
 def one_hot_encode(seq: str):
@@ -498,6 +539,9 @@ def process_record(
         f"end_offset={end_offset}, sequence_length={len(seq)}"
     )
 
+    if not strand:
+        seq = reverse_complement(seq)
+
     # ST uses N*4000 + seq + N*4000 (CONTEXT=8000)
     padded = "N" * CONTEXT_HALF + seq + "N" * CONTEXT_HALF
     acceptor_prob, donor_prob = _predict_windows(padded, models, device, logger)
@@ -508,35 +552,31 @@ def process_record(
             f"Model output length mismatch for {header}: expected {len(seq)}, got {len(acceptor_prob)}",
         )
 
-    # fixedStep start = start + 2 is a calibrated skip of each chunk's first base;
-    # it makes the tracked interval [start+2, end] (header coords are 0-based
-    # half-open), so emit chunk_length - 1 values: the last lands on `end` (the
-    # chromosome length for a terminal chunk), never on end+1 (which would make
-    # wigToBigWig reject the file).
+    acceptor_prob = shift_acceptor(acceptor_prob, ACCEPTOR_SHIFT)
+
+    # fixedStep start = start+2 matches this lab's SpliceAI calibration (donor on
+    # G of GT). Terminal chunks (no right flank) drop one value so last <= end.
     wiggle_header = WIGGLE_HEADER_TEMPLATE.format(chrom, start + 2)
     acc_plus_handle, donor_plus_handle, acc_minus_handle, donor_minus_handle = (
         wig_handles
     )
+    start_index, end_index = wig_inner_slice(
+        len(seq), start_offset, end_offset, plus=strand
+    )
+    acceptor_slice = acceptor_prob[start_index:end_index]
+    donor_slice = donor_prob[start_index:end_index]
 
     if strand:
         acc_plus_handle.write(wiggle_header)
         donor_plus_handle.write(wiggle_header)
-        start_index = start_offset
-        end_index = len(seq) - end_offset - 1
-        acceptor_slice = acceptor_prob[start_index:end_index]
-        donor_slice = donor_prob[start_index:end_index]
         write_probabilities(donor_plus_handle, donor_slice, round_to, min_prob)
         write_probabilities(acc_plus_handle, acceptor_slice, round_to, min_prob)
         return
 
     acc_minus_handle.write(wiggle_header)
     donor_minus_handle.write(wiggle_header)
-    start_index = end_offset + 1  # drops (after reversal) the value at fixedStep end+1
-    end_index = len(seq) - start_offset
-    acceptor_slice = acceptor_prob[start_index:end_index][::-1]
-    donor_slice = donor_prob[start_index:end_index][::-1]
-    write_probabilities(donor_minus_handle, donor_slice, round_to, min_prob)
-    write_probabilities(acc_minus_handle, acceptor_slice, round_to, min_prob)
+    write_probabilities(donor_minus_handle, donor_slice[::-1], round_to, min_prob)
+    write_probabilities(acc_minus_handle, acceptor_slice[::-1], round_to, min_prob)
 
 
 def run(args: argparse.Namespace, logger: Logger) -> None:
