@@ -20,8 +20,9 @@ import gzip
 import importlib.metadata as importlib_metadata
 import re
 import sys
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Iterator, Sequence, TextIO
+from typing import Any, NoReturn, TextIO
 
 FASTA_HEADER_START = ">"
 WIGGLE_HEADER_TEMPLATE = "fixedStep chrom={} start={} step=1 span=1\n"
@@ -107,7 +108,10 @@ def positive_int(value: str) -> int:
     >>> positive_int("10")
     10
     """
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except Exception:
+        raise argparse.ArgumentTypeError(f"Invalid integer: {value}") from None
     if parsed < 1:
         raise argparse.ArgumentTypeError("Value must be >= 1")
     return parsed
@@ -131,7 +135,10 @@ def non_negative_int(value: str) -> int:
     >>> non_negative_int("0")
     0
     """
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except Exception:
+        raise argparse.ArgumentTypeError(f"Invalid integer: {value}") from None
     if parsed < 0:
         raise argparse.ArgumentTypeError("Value must be >= 0")
     return parsed
@@ -155,13 +162,16 @@ def probability(value: str) -> float:
     >>> probability("0.5")
     0.5
     """
-    parsed = float(value)
+    try:
+        parsed = float(value)
+    except Exception:
+        raise argparse.ArgumentTypeError(f"Invalid float: {value}") from None
     if not 0.0 <= parsed <= 1.0:
         raise argparse.ArgumentTypeError("Value must be between 0.0 and 1.0")
     return parsed
 
 
-def fail(logger: Logger, message: str) -> None:
+def fail(logger: Logger, message: str) -> NoReturn:
     """Log an error message and exit with code 1.
 
     Parameters
@@ -317,9 +327,14 @@ def parse_header(header: str, logger: Logger) -> tuple[str, int, int, bool]:
             ),
         )
 
+    assert match is not None
     chrom = match.group("chrom")
-    start = int(match.group("region_start"))
-    end = int(match.group("region_end"))
+    try:
+        start = int(match.group("region_start"))
+        end = int(match.group("region_end"))
+    except ValueError:
+        fail(logger, f"Invalid coordinates in header: {header}")
+        raise
     strand = match.group("strand") == "+"
 
     if end <= start:
@@ -406,7 +421,7 @@ def bundled_model_paths(logger: Logger) -> list[Path]:
                 logger,
                 f"Bundled SpliceAI model not found in installed package: {relative_path}",
             )
-        model_paths.append(Path(distribution.locate_file(package_path)))
+        model_paths.append(Path(str(distribution.locate_file(package_path))))
 
     return model_paths
 
@@ -465,14 +480,18 @@ def write_probabilities(
     '0.5\\n0.0\\n'
     """
     for value in probabilities:
-        parsed = round(float(value), round_to) if value >= min_prob else 0.0
+        try:
+            fv = float(value)
+        except (TypeError, ValueError):
+            fv = 0.0
+        parsed = round(fv, round_to) if fv >= min_prob else 0.0
         handle.write(f"{parsed}\n")
 
 
 def process_record(
     header: str,
     seq: str,
-    models: Sequence[object],
+    models: Sequence[Any],
     round_to: int,
     min_prob: float,
     offset: int,
@@ -544,6 +563,11 @@ def process_record(
 
     acceptor_prob = y[0, :, 1]
     donor_prob = y[0, :, 2]
+    # fixedStep start = start + 2 is a calibrated skip of each chunk's first base;
+    # it makes the tracked interval [start+2, end] (header coords are 0-based
+    # half-open), so emit chunk_length - 1 values: the last lands on `end` (the
+    # chromosome length for a terminal chunk), never on end+1 (which would make
+    # wigToBigWig reject the file).
     wiggle_header = WIGGLE_HEADER_TEMPLATE.format(chrom, start + 2)
 
     acc_plus_handle, donor_plus_handle, acc_minus_handle, donor_minus_handle = (
@@ -555,7 +579,7 @@ def process_record(
         donor_plus_handle.write(wiggle_header)
 
         start_index = start_offset
-        end_index = len(seq) - end_offset
+        end_index = len(seq) - end_offset - 1
         acceptor_prob = acceptor_prob[start_index:end_index]
         donor_prob = donor_prob[start_index:end_index]
 
@@ -566,7 +590,7 @@ def process_record(
     acc_minus_handle.write(wiggle_header)
     donor_minus_handle.write(wiggle_header)
 
-    start_index = end_offset
+    start_index = end_offset + 1  # drops (after reversal) the value at fixedStep end+1
     end_index = len(seq) - start_offset
     acceptor_prob = acceptor_prob[start_index:end_index][::-1]
     donor_prob = donor_prob[start_index:end_index][::-1]

@@ -23,7 +23,7 @@ import re
 import sys
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import NoReturn, TextIO
 
 FASTA_HEADER_START = ">"
 WIGGLE_HEADER_TEMPLATE = "fixedStep chrom={} start={} step=1 span=1\n"
@@ -101,7 +101,7 @@ def probability(value: str) -> float:
     return parsed
 
 
-def fail(logger: Logger, message: str) -> None:
+def fail(logger: Logger, message: str) -> NoReturn:
     logger.error(message)
     raise SystemExit(1)
 
@@ -278,7 +278,9 @@ def _load_sptransformer_model(ckpt_path: Path, device: str, logger: Logger):
             attn_depth=8,
             training=False,
         )
-        save_dict = torch.load(str(ckpt_path), map_location="cpu")
+        save_dict = torch.load(  # nosemgrep: trailofbits.python.pickles-in-pytorch.pickles-in-pytorch
+            str(ckpt_path), map_location="cpu"
+        )
         # ckpt may be {"state_dict": ...} or plain state_dict
         state = (
             save_dict.get("state_dict", save_dict)
@@ -506,6 +508,11 @@ def process_record(
             f"Model output length mismatch for {header}: expected {len(seq)}, got {len(acceptor_prob)}",
         )
 
+    # fixedStep start = start + 2 is a calibrated skip of each chunk's first base;
+    # it makes the tracked interval [start+2, end] (header coords are 0-based
+    # half-open), so emit chunk_length - 1 values: the last lands on `end` (the
+    # chromosome length for a terminal chunk), never on end+1 (which would make
+    # wigToBigWig reject the file).
     wiggle_header = WIGGLE_HEADER_TEMPLATE.format(chrom, start + 2)
     acc_plus_handle, donor_plus_handle, acc_minus_handle, donor_minus_handle = (
         wig_handles
@@ -515,7 +522,7 @@ def process_record(
         acc_plus_handle.write(wiggle_header)
         donor_plus_handle.write(wiggle_header)
         start_index = start_offset
-        end_index = len(seq) - end_offset
+        end_index = len(seq) - end_offset - 1
         acceptor_slice = acceptor_prob[start_index:end_index]
         donor_slice = donor_prob[start_index:end_index]
         write_probabilities(donor_plus_handle, donor_slice, round_to, min_prob)
@@ -524,7 +531,7 @@ def process_record(
 
     acc_minus_handle.write(wiggle_header)
     donor_minus_handle.write(wiggle_header)
-    start_index = end_offset
+    start_index = end_offset + 1  # drops (after reversal) the value at fixedStep end+1
     end_index = len(seq) - start_offset
     acceptor_slice = acceptor_prob[start_index:end_index][::-1]
     donor_slice = donor_prob[start_index:end_index][::-1]
