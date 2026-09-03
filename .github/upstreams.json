@@ -1,5 +1,8 @@
 {
   "images": {
+    "annevo": {
+      "repo": "xjtu-omics/ANNEVO"
+    },
     "cesar2": {
       "repo": "hillerlab/CESAR2.0"
     },
