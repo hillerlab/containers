@@ -87,6 +87,7 @@ All container images are published to `ghcr.io/hillerlab/<name>`.
 
 - [softmask](https://github.com/hillerlab/containers/pkgs/container/softmask) — lightweight RepeatMasker-based soft-masking workflow
 - [psauron](https://github.com/hillerlab/containers/pkgs/container/psauron) — machine-learning assessment of protein-coding gene annotation
+- [annevo](https://github.com/hillerlab/containers/pkgs/container/annevo) — ANNEVO ab initio gene annotation (CUDA image, CPU fallback). Bundled ANNEVO is **non-commercial** (academic/non-profit research only).
 
 ## Format & data handling
 

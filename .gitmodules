@@ -13,3 +13,6 @@
 [submodule "modules/chainc"]
 	path = modules/chainc
 	url = https://github.com/hillerlab/chainc
+[submodule "modules/annevo"]
+	path = modules/annevo
+	url = https://github.com/xjtu-omics/ANNEVO.git
