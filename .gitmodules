@@ -16,3 +16,6 @@
 [submodule "modules/annevo"]
 	path = modules/annevo
 	url = https://github.com/xjtu-omics/ANNEVO.git
+[submodule "modules/tiberius"]
+	path = modules/tiberius
+	url = https://github.com/Gaius-Augustus/Tiberius.git
