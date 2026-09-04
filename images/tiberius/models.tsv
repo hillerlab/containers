@@ -1,0 +1,14 @@
+# Frozen Tiberius 2.0.7 model inventory.
+# Users select --model_cfg by hiller_alias only. upstream_yaml is the filename
+# in model_cfg/ (including the mammalia_nosofttmasking_v2.yaml typo).
+# SHA256 is of the weights archive; upstream does not publish checksums.
+hiller_alias	upstream_yaml	url	sha256
+mammalia_nosoftmasking_v2	mammalia_nosofttmasking_v2.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/tiberius_nosm_weights_v2.tar.gz	f57551eb5d6ee04a011d7b5c828e6283ded1e04d26135048185c9b27b1948053
+mammalia_softmasking_v2	mammalia_softmasking_v2.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/tiberius_weights_v2.tar.gz	821482a1c179957e56e37770be49bdecae34646af242eb6443ff794c0b12b1aa
+vertebrates	vertebrates.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/vertebrates_weights.tar.gz	cffe4571ba515adbfe8d68b9fec58d2682320011836c4f167466cba5917c0149
+insecta	insecta.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/insecta_unmasked_v2.tar.gz	f01ceb5f2b33cab6fb6a0256eeaea9f445af956ba65200546332f51d727d6ffb
+fungi	fungi.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/fungi.tar.gz	4a309a630574f395d82d747dcf64716704dab056db534e427ae0cec1b7410e20
+angiosperms	angiosperms.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/angiosperms.tar.gz	055ce6071a2e9216c63ba3470e228c0b4e6fb2461ef522cc44b3f0f193ee5d06
+diatoms	diatoms.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/diatoms_unmasked.tar.gz	ef95428c4d4f348dca03505796e3884c0fb7554449e7176c2cddacba4b7247e0
+chlorophyta	chlorophyta.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/chlorophyta.tar.gz	13ba7369485fbf4690843dbe806b9c34808efaadd4247b2e2200be03f9f27221
+mammalia_clamsa_v2	mammalia_clamsa_v2.yaml	https://bioinf.uni-greifswald.de/bioinf/tiberius/models/tiberius_denovo_weights_v2.tar.gz	f47812345e5f265d246a6c577a7e162a896ea1815c9179c5cf1dfc164e02b036
