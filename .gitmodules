@@ -19,3 +19,6 @@
 [submodule "modules/tiberius"]
 	path = modules/tiberius
 	url = https://github.com/Gaius-Augustus/Tiberius.git
+[submodule "modules/oriongeno"]
+	path = modules/oriongeno
+	url = https://github.com/BGIResearch/OrionGeno.git
