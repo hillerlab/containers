@@ -89,6 +89,7 @@ All container images are published to `ghcr.io/hillerlab/<name>`.
 - [psauron](https://github.com/hillerlab/containers/pkgs/container/psauron) — machine-learning assessment of protein-coding gene annotation
 - [annevo](https://github.com/hillerlab/containers/pkgs/container/annevo) — ANNEVO ab initio gene annotation (CUDA image, CPU fallback). Bundled ANNEVO is **non-commercial** (academic/non-profit research only).
 - [tiberius](https://github.com/hillerlab/containers/pkgs/container/tiberius) — Tiberius ab initio gene prediction (CUDA image, CPU fallback). Bundled default models: Mammalia (masked/unmasked) and Vertebrates.
+- [oriongeno](https://github.com/hillerlab/containers/pkgs/container/oriongeno) — OrionGeno ab initio gene annotation (CUDA image, GPU required). Default checkpoint: mammals. Bundled OrionGeno is **non-commercial** (academic/non-profit research only).
 
 ## Format & data handling
 
