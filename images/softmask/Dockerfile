@@ -32,7 +32,16 @@ ENV PATH=/opt/conda/bin:$PATH
 COPY --from=rust-builder /opt/rust-tools/bin/fxsplit /usr/local/bin/fxsplit
 COPY --chmod=0755 modules/softmask/src/bin/group_mask_chunks.py modules/softmask/src/bin/renameheaders.py modules/softmask/src/bin/merge_repeatmasker_repeats.sh /usr/local/bin/
 
-RUN fxsplit --version \
+# procps provides `ps`. Nextflow runs it inside the task container to collect
+# metrics and exits immediately when it is missing. The micromamba base has no `ps`.
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
+USER $MAMBA_USER
+
+RUN command -v ps \
+    && ps -o pid= -p $$ >/dev/null \
+    && fxsplit --version \
     && RepeatMasker -v 
 
 WORKDIR /work
