@@ -36,7 +36,13 @@ pub struct SplitStats {
     pub chunks_manifest: PathBuf,
 }
 
+/// Largest molecule count PBSIM3 receives for one transcript row. PBSIM3 3.0.4 trans mode
+/// segfaults somewhere above ~60,000 molecules of a single transcript, so heavier records are
+/// split into several rows (same id) before bin packing, which also spreads them over chunks.
+const MAX_MOLECULES_PER_RECORD: u64 = 50_000;
+
 /// A single PBSIM3 transcript record (verbatim four columns).
+#[derive(Clone)]
 struct Record {
     id: String,
     sense: u64,
@@ -49,6 +55,30 @@ impl Record {
     fn work(&self, pass_count: u64) -> u128 {
         (self.seq.len() as u128) * (self.sense as u128) * (pass_count.max(1) as u128)
     }
+}
+
+/// Split every record whose sense or antisense count exceeds `cap` into near-equal rows that
+/// keep the same id; total counts are conserved exactly.
+fn cap_record_counts(records: Vec<Record>, cap: u64) -> Vec<Record> {
+    let mut out = Vec::with_capacity(records.len());
+    for r in records {
+        let pieces = r.sense.max(r.antisense).div_ceil(cap).max(1);
+        if pieces == 1 {
+            out.push(r);
+            continue;
+        }
+        for i in 0..pieces {
+            // Distribute the remainder over the first pieces.
+            let share = |total: u64| total / pieces + u64::from(i < total % pieces);
+            out.push(Record {
+                id: r.id.clone(),
+                sense: share(r.sense),
+                antisense: share(r.antisense),
+                seq: r.seq.clone(),
+            });
+        }
+    }
+    out
 }
 
 /// Parse the four-column transcript file.
@@ -96,7 +126,10 @@ pub fn run(params: &SplitParams) -> Result<SplitStats> {
     if params.chunks == 0 {
         return Err(Error::config("--pbsim-chunks must be >= 1"));
     }
-    let records = read_transcripts(&params.transcript)?;
+    let records = cap_record_counts(
+        read_transcripts(&params.transcript)?,
+        MAX_MOLECULES_PER_RECORD,
+    );
     if records.is_empty() {
         return Err(Error::config(format!(
             "no transcripts to split in {}",
@@ -251,6 +284,65 @@ t5\t5\t0\tGGGGGGGG
         };
         let stats = run(&params).unwrap();
         assert_eq!(stats.chunks_written, 2, "cannot exceed transcript count");
+    }
+
+    #[test]
+    fn heavy_records_are_split_and_conserved() {
+        let records = vec![
+            Record {
+                id: "big".into(),
+                sense: 125_001,
+                antisense: 3,
+                seq: "ACGT".into(),
+            },
+            Record {
+                id: "small".into(),
+                sense: 10,
+                antisense: 0,
+                seq: "AC".into(),
+            },
+        ];
+        let out = cap_record_counts(records, 50_000);
+        let big: Vec<&Record> = out.iter().filter(|r| r.id == "big").collect();
+        assert_eq!(big.len(), 3);
+        assert!(big.iter().all(|r| r.sense <= 50_000));
+        assert_eq!(big.iter().map(|r| r.sense).sum::<u64>(), 125_001);
+        assert_eq!(big.iter().map(|r| r.antisense).sum::<u64>(), 3);
+        assert_eq!(out.iter().filter(|r| r.id == "small").count(), 1);
+    }
+
+    #[test]
+    fn heavy_transcript_spreads_over_chunks() {
+        let dir = TempDir::new().unwrap();
+        let tf = write_file(dir.path(), "in.tsv", "a\t120000\t0\tACGT\nb\t5\t0\tGT\n");
+        let params = SplitParams {
+            transcript: tf,
+            chunks: 4,
+            pass_count: 1,
+            outdir: dir.path().join("out"),
+            prefix: "sim".into(),
+        };
+        let stats = run(&params).unwrap();
+        assert_eq!(stats.chunks_written, 4);
+        let mut total = 0u64;
+        for entry in std::fs::read_dir(dir.path().join("out")).unwrap() {
+            let p = entry.unwrap().path();
+            if p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("chunk_")
+            {
+                for line in std::fs::read_to_string(&p).unwrap().lines() {
+                    let f: Vec<&str> = line.split('\t').collect();
+                    let n: u64 = f[1].parse().unwrap();
+                    assert!(n <= MAX_MOLECULES_PER_RECORD);
+                    if f[0] == "a" {
+                        total += n;
+                    }
+                }
+            }
+        }
+        assert_eq!(total, 120_000);
     }
 
     #[test]
