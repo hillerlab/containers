@@ -63,26 +63,30 @@ def candidate_probe(torch):
     return runner.Predictor([ZeroJunctionModel(), ZeroJunctionModel()], "cpu", "fp32")
 
 
-def select_candidates(predictor, torch, plus, offset, max_candidates, outside_high):
+def select_candidates(
+    predictor, torch, plus, offset, max_candidates, outside_high,
+    min_candidate_prob=0.01, candidate_logits=None, logger=None,
+):
     sequence, mask_start = runner.locus_sequence("A" * 100, 0, 100, plus, offset)
     output_length = len(sequence) - runner.CONTEXT
     assert output_length > mask_start + 100
     low, high, outside = mask_start + 49, mask_start + 50, mask_start + 100
     logits = torch.full((2, 1, 2, output_length), -20.0)
-    logits[:, 0, 0, low] = -6.0
-    logits[0, 0, 1, high], logits[1, 0, 1, high] = -10.0, -2.0
+    if candidate_logits is None:
+        logits[:, 0, 0, low] = -6.0
+        logits[0, 0, 1, high], logits[1, 0, 1, high] = -10.0, -2.0
+    else:
+        for position, member_logits in candidate_logits.items():
+            logits[0, 0, 0, mask_start + position] = member_logits[0]
+            logits[1, 0, 0, mask_start + position] = member_logits[1]
     if outside_high:
         logits[:, 0, :, outside] = 20.0
     predictor.encode = lambda *args, **kwargs: torch.empty((1, 4, 1))
     predictor.forward = lambda x: (logits, [None, None])
-    try:
-        result = predictor.transcripts(
-            sequence, "GRCh38", 1, plus, mask_start, 100, max_candidates
-        )
-    except TypeError as error:
-        if "were given" not in str(error):
-            raise
-        result = predictor.transcripts(sequence, "GRCh38", 1)
+    result = predictor.transcripts(
+        sequence, "GRCh38", 1, plus, mask_start, 100, max_candidates,
+        min_candidate_prob, "toy", logger or runner.Logger(),
+    )
     return result, mask_start, output_length
 
 
@@ -97,17 +101,12 @@ def check_locus_bounds():
         assert idxs.tolist() == [mask_start + 50], idxs.tolist()
         assert all(mask_start <= index < mask_start + 100 for index in idxs)
         assert len(masks[0]) == output_length
-    (masks, _, idxs), mask_start, _ = select_candidates(
-        predictor, torch, True, 0, 1024, True
-    )
-    assert idxs.tolist() == list(range(mask_start, mask_start + 100))
-    core_mask = masks[0][mask_start:mask_start + 100]
-    assert all(core_mask)
-    single_exon = runner.bed12_row("toy", 0, 100, "unspliced", True, core_mask, 1, 500)
-    assert single_exon.split("\t")[9:12] == ["1", "100", "0"]
     assert runner.parser().parse_args([
         "transcripts", "--genome", "/tmp/g.fa", "--loci", "/tmp/l.bed"
-    ]).max_candidates == 1024
+    ]).max_candidates == 2048
+    assert runner.parser().parse_args([
+        "transcripts", "--genome", "/tmp/g.fa", "--loci", "/tmp/l.bed"
+    ]).min_candidate_prob == 0.01
 
 
 def check_member_reduction():
@@ -127,8 +126,64 @@ def check_member_reduction():
     assert all(mask_start <= index < mask_start + 100 for index in idxs)
 
 
+def check_candidate_gate():
+    import torch
+
+    got = []
+    for plus in (True, False):
+        predictor = candidate_probe(torch)
+        (_, _, idxs), mask_start, _ = select_candidates(
+            predictor, torch, plus, 0, 2048, False,
+            candidate_logits={49: (-6.0, -6.0), 50: (-10.0, -2.0),
+                              51: (-4.5951, -4.5951)},
+        )
+        got.append(idxs.tolist())
+    assert got == [[50, 51], [50, 51]], got
+
+
+def check_candidate_cap():
+    import torch
+
+    class WarningCollector:
+        def __init__(self):
+            self.messages = []
+
+        def warning(self, message):
+            self.messages.append(message)
+
+    got = []
+    for plus in (True, False):
+        predictor = candidate_probe(torch)
+        logger = WarningCollector()
+        (_, _, idxs), _, _ = select_candidates(
+            predictor, torch, plus, 0, 2, False,
+            candidate_logits={10: (-2.0, -2.0), 20: (-1.0, -1.0), 30: (-3.0, -3.0)},
+            logger=logger,
+        )
+        got.append((idxs.tolist(), logger.messages))
+    expected_warning = "toy: 3 positions passed --min-candidate-prob; keeping the top 2"
+    assert got == [([10, 20], [expected_warning]), ([10, 20], [expected_warning])]
+
+
+def check_all_below_gate():
+    import torch
+
+    got = []
+    for plus in (True, False):
+        predictor = candidate_probe(torch)
+        (masks, _, idxs), mask_start, _ = select_candidates(
+            predictor, torch, plus, 0, 2048, False,
+            candidate_logits={49: (-6.0, -6.0)},
+        )
+        core_mask = masks[0][mask_start:mask_start + 100]
+        row = runner.bed12_row("toy", 0, 100, "unspliced", plus, core_mask, 1, 500)
+        got.append((idxs.tolist(), row.split("\t")[9:12]))
+    assert got == [([49], ["1", "100", "0"]), ([49], ["1", "100", "0"])]
+
+
 def check_oom_handling():
     import numpy as np
+    import torch
 
     class Genome:
         def keys(self):
@@ -161,8 +216,8 @@ def check_oom_handling():
             nonlocal calls
             calls += 1
             if calls == 1:
-                raise MemoryError("injected allocation failure")
-            _, mask_start, locus_length, _ = options
+                raise torch.OutOfMemoryError("can't allocate memory: tried to allocate 32.00 MiB")
+            _, mask_start, locus_length = options[:3]
             out_length = len(sequence) - runner.CONTEXT
             assert 0 <= mask_start < mask_start + locus_length <= out_length
             return [np.ones(out_length, dtype=np.int32)], np.zeros((1, 1)), np.array([0])
@@ -200,6 +255,9 @@ def check():
     check_encoding_contract()
     check_locus_bounds()
     check_member_reduction()
+    check_candidate_gate()
+    check_candidate_cap()
+    check_all_below_gate()
     check_oom_handling()
 
     class FixedModel:

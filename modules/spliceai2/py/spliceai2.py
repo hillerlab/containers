@@ -8,8 +8,10 @@
 The WIG track starts at 1-based ``chunk_start + 2``, matching spliceai.py.
 For transcripts, BED12 scores are ``round(1000 * sigmoid(sum of the selected
 out_tx junction logits))``. Each BED locus is decoded once, with up to 65,536
-bases of context per side by default. SpliceAI2 decodes intron chains and does
-not predict TSS/TES; the locus gives the terminal exon ends.
+bases of context per side by default. SpliceAI2 sees ±65,536 bp of context;
+introns longer than about 65 kb are outside its view, may come out split into
+~70-kb pieces, and are not recovered reliably. SpliceAI2 decodes intron chains
+and does not predict TSS/TES; the locus gives the terminal exon ends.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ __author__ = "Alejandro Gonzales-Irribarren"
 __credits__ = ["Yury V. Malovichko", "Michael Hiller"]
 __email__ = "alejandrxgzi@gmail.com"
 __github__ = "https://github.com/alejandrogzi"
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 import argparse
 import gzip
@@ -298,6 +300,7 @@ class Predictor:
     def transcripts(
         self, sequence: str, species: str, k: int, plus: bool,
         mask_start: int, locus_length: int, max_candidates: int,
+        min_candidate_prob: float, locus_name: str, logger: Logger,
     ):
         from spliceai2.utils import decode_topk_tx
 
@@ -311,9 +314,19 @@ class Predictor:
                 f"Decoded output length {out_1d_len} does not cover locus mask "
                 f"[{mask_start}, {mask_end})"
             )
-        out_2d_len = min(max_candidates, locus_length)
         scores = member_ss.sigmoid().mean(dim=0).amax(dim=1)[:, mask_start:mask_end]
-        idxs = scores.topk(out_2d_len, dim=1)[1].add(mask_start).sort(dim=1).values
+        positions = torch.nonzero(scores[0] >= min_candidate_prob).flatten()
+        candidate_count = positions.numel()
+        if not candidate_count:
+            positions = scores[0].argmax().reshape(1)
+        elif candidate_count > max_candidates:
+            logger.warning(
+                f"{locus_name}: {candidate_count} positions passed --min-candidate-prob; "
+                f"keeping the top {max_candidates}"
+            )
+            positions = positions[scores[0, positions].topk(max_candidates).indices]
+        idxs = positions.sort().values.add(mask_start).unsqueeze(0)
+        out_2d_len = idxs.shape[1]
         amp = (
             torch.autocast(device_type="cuda", dtype=torch.float16)
             if self.device == "cuda" and self.precision == "fp16-mixed"
@@ -528,11 +541,14 @@ def run_transcripts(args, logger: Logger) -> None:
                         predictor.torch.cuda.reset_peak_memory_stats(device)
                     masks, out_tx, idxs = predictor.transcripts(
                         sequence, args.species, args.k, plus, mask_start, length,
-                        args.max_candidates,
+                        args.max_candidates, args.min_candidate_prob, name, logger,
                     )
                 except (MemoryError, RuntimeError) as error:
-                    if not isinstance(error, MemoryError) and (
-                        device != "cuda" or "out of memory" not in str(error).lower()
+                    message = str(error).lower()
+                    if not (
+                        isinstance(error, (MemoryError, predictor.torch.OutOfMemoryError))
+                        or "out of memory" in message
+                        or "can't allocate memory" in message
                     ):
                         raise
                     out_of_memory += 1
@@ -666,13 +682,16 @@ def add_common(parser: argparse.ArgumentParser, transcripts: bool = False) -> No
 
 def parser() -> argparse.ArgumentParser:
     cli = argparse.ArgumentParser(
-        description="SpliceAI2: weights are gated and never included in the image; mount them or use fetch-models."
+        description=("SpliceAI2: weights are gated and never included in the image; mount them or use fetch-models. "
+                     "SpliceAI2 sees ±65,536 bp of context; introns longer than about 65 kb are outside its view, "
+                     "may come out split into ~70-kb pieces, and are not recovered reliably.")
     )
     cli.add_argument("-v", "--version", action="version", version=f"spliceai2 {__version__}")
     commands = cli.add_subparsers(dest="command", required=True)
     convention = (
         "SpliceAI2 adds no end padding; N and end padding follow the benchmark "
-        "convention (A on +, T on −)."
+        "convention (A on +, T on −). SpliceAI2 sees ±65,536 bp of context; introns longer than about 65 kb "
+        "are outside its view, may come out split into ~70-kb pieces, and are not recovered reliably."
     )
     predict = commands.add_parser(
         "predict", help="Write donor/acceptor WIG tracks", description=convention
@@ -685,12 +704,16 @@ def parser() -> argparse.ArgumentParser:
     transcripts = commands.add_parser(
         "transcripts", help="Decode top-k BED12 transcripts per BED locus",
         description=("Decode each locus once. SpliceAI2 predicts intron chains, not TSS/TES; "
-                     "locus ends define terminal exons.")
+                     "locus ends define terminal exons. SpliceAI2 sees ±65,536 bp of context; introns longer "
+                     "than about 65 kb are outside its view, may come out split into ~70-kb pieces, and are not "
+                     "recovered reliably.")
     )
     add_common(transcripts, transcripts=True)
     transcripts.add_argument("-k", type=positive_int, default=3, help="Transcripts per locus (default: 3)")
-    transcripts.add_argument("--max-candidates", type=positive_int, default=1024,
-                             help="Maximum splice-site candidates per locus (default: 1024)")
+    transcripts.add_argument("--max-candidates", type=positive_int, default=2048,
+                             help="Maximum splice-site candidates per locus (default: 2048)")
+    transcripts.add_argument("--min-candidate-prob", type=probability, default=0.01,
+                             help="Mean-member splice-site probability threshold (default: 0.01)")
     transcripts.add_argument("--max-length", type=positive_int, default=1_048_576,
                              help="Skip loci longer than this many bases")
     fetch = commands.add_parser(
