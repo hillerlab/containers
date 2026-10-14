@@ -21,6 +21,9 @@ FROM python:3.11-slim-bookworm AS runtime
 ARG MODULE_VERSION
 ARG SPTRANSFORMER_MODEL_URL=https://media.githubusercontent.com/media/ShenLab-Genomics/SpliceTransformer/release1/model/weights/SpTransformer_pytorch.ckpt
 ARG SPTRANSFORMER_MODEL_SHA256=bf9937c234139f850a770f84a26c65213a80d696d82426949a432ed1ccb9aa4e
+# CUDA build of torch: runs on GPU when one is visible (--gpus all / --nv), and on CPU otherwise
+# (`splicetransformer predict --device auto|cuda|cpu`). Use https://download.pytorch.org/whl/cpu for a smaller CPU-only image.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
 LABEL module.version="${MODULE_VERSION}"
 RUN echo "Building version ${MODULE_VERSION}"
 
@@ -30,7 +33,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /work
 
-RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+RUN pip install --no-cache-dir --extra-index-url ${TORCH_INDEX_URL} \
     "numpy<2" \
     "torch==2.4.1" \
     "sinkhorn-transformer" \
@@ -68,7 +71,11 @@ if actual_sha256 != expected_sha256:
         f"SpliceTransformer checkpoint checksum mismatch: expected {expected_sha256}, got {actual_sha256}"
     )
 os.replace(temporary, destination)
+# NamedTemporaryFile creates 0600 files: make the checkpoint readable by any user (docker -u, singularity)
+os.chmod(destination, 0o644)
 PY
+
+RUN chmod 0755 /models
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
