@@ -20,7 +20,7 @@ __author__ = "Alejandro Gonzales-Irribarren"
 __credits__ = ["Yury V. Malovichko", "Michael Hiller"]
 __email__ = "alejandrxgzi@gmail.com"
 __github__ = "https://github.com/alejandrogzi"
-__version__ = "0.0.5"
+__version__ = "0.0.6"
 
 import argparse
 import gzip
@@ -324,7 +324,9 @@ class Predictor:
                 f"{locus_name}: {candidate_count} positions passed --min-candidate-prob; "
                 f"keeping the top {max_candidates}"
             )
-            positions = positions[scores[0, positions].topk(max_candidates).indices]
+            positions = positions[
+                torch.argsort(scores[0, positions], descending=True, stable=True)[:max_candidates]
+            ]
         idxs = positions.sort().values.add(mask_start).unsqueeze(0)
         out_2d_len = idxs.shape[1]
         amp = (

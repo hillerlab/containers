@@ -141,6 +141,31 @@ def check_candidate_gate():
     assert got == [[50, 51], [50, 51]], got
 
 
+def check_candidate_gate_boundary():
+    import torch
+
+    # The two member probabilities average to the exact float32 threshold.
+    exact = torch.tensor([-4.595596790313721, -4.5946431159973145]).sigmoid().mean()
+    below = torch.tensor([-4.595119953155518, -4.595119953155518]).sigmoid().mean()
+    threshold = torch.tensor(0.01)
+    assert exact.item() == threshold.item()
+    assert below < threshold
+
+    got = []
+    for plus in (True, False):
+        predictor = candidate_probe(torch)
+        (_, _, idxs), _, _ = select_candidates(
+            predictor, torch, plus, 0, 2048, False,
+            candidate_logits={
+                10: (0.0, 0.0),
+                20: (-4.595596790313721, -4.5946431159973145),
+                30: (-4.595119953155518, -4.595119953155518),
+            },
+        )
+        got.append(idxs.tolist())
+    assert got == [[10, 20], [10, 20]], got
+
+
 def check_candidate_cap():
     import torch
 
@@ -163,6 +188,20 @@ def check_candidate_cap():
         got.append((idxs.tolist(), logger.messages))
     expected_warning = "toy: 3 positions passed --min-candidate-prob; keeping the top 2"
     assert got == [([10, 20], [expected_warning]), ([10, 20], [expected_warning])]
+
+
+def check_candidate_cap_ties():
+    import torch
+
+    got = []
+    tied_logits = {position: (0.0, 0.0) for position in range(100)}
+    for plus in (True, False):
+        predictor = candidate_probe(torch)
+        (_, _, idxs), _, _ = select_candidates(
+            predictor, torch, plus, 0, 5, False, candidate_logits=tied_logits
+        )
+        got.append(idxs.tolist())
+    assert got == [list(range(5)), list(range(5))], got
 
 
 def check_all_below_gate():
@@ -256,7 +295,9 @@ def check():
     check_locus_bounds()
     check_member_reduction()
     check_candidate_gate()
+    check_candidate_gate_boundary()
     check_candidate_cap()
+    check_candidate_cap_ties()
     check_all_below_gate()
     check_oom_handling()
 
