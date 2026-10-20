@@ -14,7 +14,7 @@ __author__ = "Alejandro Gonzales-Irribarren"
 __credits__ = ["Yury V. Malovichko", "Michael Hiller"]
 __email__ = "alejandrxgzi@gmail.com"
 __github__ = "https://github.com/alejandrogzi"
-__version__ = "0.0.4"
+__version__ = "0.0.6"
 
 import argparse
 import gzip
@@ -343,12 +343,13 @@ def _load_sptransformer_model(ckpt_path: Path, device: str, logger: Logger):
                 k.replace("model.", "", 1) if k.startswith("model.") else k: v
                 for k, v in state.items()
             }
-        # also try "encoder." etc - SpTransformer load expects its own keys
-        try:
-            model.load_state_dict(state, strict=False)
-        except Exception as e:
-            logger.warn(f"Strict load failed, trying strict=False: {e}")
-            model.load_state_dict(state, strict=False)
+        # the checkpoint stores the axial positional embedding as attn.pos_emb.weights_<i>; the installed
+        # axial_positional_embedding keeps it in a ParameterList (attn.pos_emb.weights.<i>). Without this rename a
+        # non-strict load skipped those weights, so every process ran with a fresh random positional embedding
+        # (run-to-run differences up to ~0.1 per position, and not the trained model).
+        state = {re.sub(r"\.weights_(\d+)$", r".weights.\1", k): v for k, v in state.items()}
+        # strict: any other missing or unexpected key is an error, never a silent random initialisation
+        model.load_state_dict(state, strict=True)
         model.to(device).eval()
         logger.info(f"Loaded SpliceTransformer model from {ckpt_path} on {device}")
         return model
