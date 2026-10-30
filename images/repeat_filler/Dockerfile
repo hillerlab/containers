@@ -31,7 +31,7 @@ RUN micromamba install -y -n base \
         -c conda-forge \
         -c bioconda \
         python=3.11 \
-        lastz=1.0.4 \
+        lastz=1.04.60 \
         ucsc-axttopsl=482 \
         ucsc-axtchain=482 \
         ucsc-chainsort=482 \
