@@ -12,7 +12,7 @@ RUN echo "Building version ${MODULE_VERSION}"
 
 RUN micromamba install -y -n base -c conda-forge -c bioconda \
         python=3.11 \
-        lastz=1.0.4 \
+        lastz=1.04.60 \
         ucsc-axttopsl=482 \
         ucsc-twobittofa=482 \
         procps-ng \
