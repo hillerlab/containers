@@ -20,7 +20,7 @@ RUN cargo install \
         --all-features \
         --locked \
         --root /opt/rust-tools \
-        --version 0.0.13 \
+        --version 0.0.14 \
         chaintools \
     && cargo install \
         --all-features \
