@@ -20,7 +20,9 @@ RUN apt-get update && apt-get install -y \
         git \
         bsd-mailx \
         mailutils \
-        build-essential && \
+        build-essential \
+        mafft \
+        exonerate && \
     rm -rf /var/lib/apt/lists/*
 
 # cargo / rust
